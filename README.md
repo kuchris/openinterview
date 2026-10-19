@@ -207,6 +207,9 @@ In the app, the same is under ⚙︎ → **Your profile** (Import CV…, Edit…
 
 1. The text is extracted (PDF, Word, RTF, Pages or text). The raw text is kept as
    `~/.openinterview/cv.txt`.
+   - PDFs go through Apple's PDFKit (`bin/pdftext`), with pypdf as a fallback. Some PDF
+     fonts make pypdf drop the spaces between words ("SoftwareEngineeringIntern"); the
+     result with fewer glued words wins.
 2. A separate `profile-builder` agent organises it into the profile sections: about me,
    target role, experience (keeping the CV's numbers), projects, education, skills,
    strengths backed by evidence, weaknesses, and 2–3 STAR story drafts built from your
@@ -216,6 +219,8 @@ In the app, the same is under ⚙︎ → **Your profile** (Import CV…, Edit…
 4. You get 3–6 questions to answer to complete the profile. They are stored as a comment
    in the file and are never sent with questions.
 5. If the AI is unreachable, the raw CV text is imported instead, and you're told why.
+   Analysis gets a 180 s timeout, since a long CV can take over a minute. Re-importing
+   replaces earlier raw CV text instead of piling it up.
 
 Live, on a fictional CV, it took 11 s. Every fact matched the CV, gaps were marked
 `[to add]`, and the questions included "What is a real weakness, and how are you working

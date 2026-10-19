@@ -60,7 +60,7 @@ def import_profile(cfg: AssistantConfig, source: str, provider: AnswerProvider |
     if not cv_text:
         raise ValueError(f"no text found in {path.name} (is it a scanned image?)")
     profile.save_cv_text(cv_text, dest.parent)
-    existing = profile.load(dest)
+    existing = profile.strip_raw_cv(profile.load(dest))  # old raw CV text is not "notes"
     temp = None
     try:
         if provider is None:

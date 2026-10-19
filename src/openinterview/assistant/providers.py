@@ -108,6 +108,9 @@ PROFILE_SCHEMA = {
 }
 
 
+PROFILE_TIMEOUT = 180.0  # organising a long CV can take a minute or more
+
+
 def _profile_request(cv_text: str, existing: str) -> str:
     notes = existing.strip() or "(none)"
     return (f"Existing profile notes (keep them):\n<<<\n{notes}\n>>>\n\n"
@@ -227,14 +230,15 @@ class _HTTP:
         self.timeout = timeout
 
     def request(self, method: str, path: str, body: dict | None = None,
-                query: dict | None = None, headers: dict | None = None) -> dict:
+                query: dict | None = None, headers: dict | None = None,
+                timeout: float | None = None) -> dict:
         url = self.base_url + path + ("?" + urllib.parse.urlencode(query) if query else "")
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(url, data=data, method=method,
                                      headers={"Content-Type": "application/json",
                                               **(headers or {})})
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with urllib.request.urlopen(req, timeout=timeout or self.timeout) as resp:
                 return json.load(resp)
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode(errors="replace")[:300]
@@ -309,14 +313,15 @@ class OpenCodeProvider:
         return self.session_id
 
     def _send(self, text: str, schema: dict, agent: str | None = None,
-              session: str | None = None) -> tuple[dict, str]:
+              session: str | None = None, timeout: float | None = None) -> tuple[dict, str]:
         body: dict = {"agent": agent or self.AGENT, "system": _rules(schema),
                       "parts": [{"type": "text", "text": text}]}
         if self.model and "/" in self.model:
             provider, model = self.model.split("/", 1)
             body["model"] = {"providerID": provider, "modelID": model}
         sid = session or self._session()
-        r = self.http.request("POST", f"/session/{sid}/message", body, self._q())
+        r = self.http.request("POST", f"/session/{sid}/message", body, self._q(),
+                              timeout=timeout)
         info = r.get("info", {})
         if info.get("error"):
             err = info["error"]
@@ -329,14 +334,14 @@ class OpenCodeProvider:
         return _parse_json_text(text), model
 
     def _ask(self, text: str, schema: dict, agent: str | None = None,
-             session: str | None = None) -> tuple[dict, str]:
+             session: str | None = None, timeout: float | None = None) -> tuple[dict, str]:
         try:
-            return self._send(text, schema, agent, session)
+            return self._send(text, schema, agent, session, timeout)
         except (ProviderError, ValueError) as exc:
             if isinstance(exc, ProviderError) and not str(exc).startswith("model did not"):
                 raise  # transport / auth errors: retrying will not help
             return self._send("Your previous reply was not valid JSON. " + text, schema,
-                              agent, session)
+                              agent, session, timeout)
 
     def build_profile(self, cv_text: str, existing: str = "") -> tuple[str, list[str]]:
         """Organise a CV into a profile. Uses its own throwaway session, so the CV does not
@@ -344,7 +349,8 @@ class OpenCodeProvider:
         sid = self._new_session("OpenInterview profile import")
         try:
             data, _ = self._ask(_profile_request(cv_text, existing), PROFILE_SCHEMA,
-                                agent=self.BUILDER, session=sid)
+                                agent=self.BUILDER, session=sid,
+                                timeout=max(PROFILE_TIMEOUT, self.http.timeout))
         finally:
             try:
                 self.http.request("DELETE", f"/session/{sid}", query=self._q())
@@ -421,7 +427,8 @@ class OpenAICompatibleProvider:
                     {"role": "user", "content": _profile_request(cv_text, existing)}]
         r = self.http.request("POST", "/chat/completions", {
             "model": self.model, "messages": messages, "temperature": 0.1,
-            "response_format": {"type": "json_object"}}, headers=self._headers())
+            "response_format": {"type": "json_object"}}, headers=self._headers(),
+            timeout=max(PROFILE_TIMEOUT, self.http.timeout))
         return _to_profile(_parse_json_text(r["choices"][0]["message"]["content"]))
 
     def close(self) -> None:

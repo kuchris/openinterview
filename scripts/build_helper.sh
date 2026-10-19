@@ -3,6 +3,7 @@
 #   bin/sysaudio          system audio capture (Core Audio process tap, macOS 14.2+)
 #   bin/appleasr          Apple on-device streaming ASR (SpeechAnalyzer, macOS 26+)
 #   bin/openinterview-ui  native app window (SwiftUI, macOS 14+)
+#   bin/pdftext           PDF text via PDFKit (CV import)
 #
 # A binary is rebuilt only when one of its sources is newer (use --force to rebuild all).
 # This matters: binaries are ad-hoc signed, and macOS asks for privacy permissions again
@@ -36,6 +37,7 @@ build() {  # name, extra swiftc flags, sources...
 
 build sysaudio "" helpers/common/common.swift helpers/sysaudio/main.swift
 build openinterview-ui "-parse-as-library" helpers/ui/OpenInterviewApp.swift helpers/ui/Views.swift
+build pdftext "" helpers/pdftext/main.swift
 if [[ "$(sw_vers -productVersion | cut -d. -f1)" -ge 26 ]]; then
   build appleasr "" helpers/common/common.swift helpers/appleasr/main.swift \
     || echo "note: appleasr build failed (needs the macOS 26 SDK); Apple ASR unavailable"

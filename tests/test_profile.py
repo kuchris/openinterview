@@ -153,3 +153,38 @@ def test_existing_notes_are_passed_to_the_builder(tmp_path):
     builder = FakeBuilder()
     import_profile(AssistantConfig(profile_path=str(dest)), str(cv), builder)
     assert "Backend engineer at a fintech" in builder.calls[0][1]
+
+
+def test_glued_words_detects_lost_spaces():
+    assert prof.glued_words("Software Engineering Intern at Octopus") == 0
+    assert prof.glued_words("SoftwareEngineeringInternatOctopus") == 1
+
+
+def test_strip_raw_cv_keeps_notes_only():
+    text = "## Target role\n- Backend\n\n## CV (cv.pdf)\n\nSoftwareEngineeringIntern"
+    assert prof.strip_raw_cv(text) == "## Target role\n- Backend"
+    assert prof.strip_raw_cv("## CV (cv.pdf)\nraw") == ""
+
+
+def test_raw_reimport_replaces_previous_cv_text(tmp_path):
+    dest = tmp_path / "profile.md"
+    dest.write_text("## Target role\n- Backend\n\n## CV (old.pdf)\n\nOLD TEXT")
+    cv = tmp_path / "new.txt"
+    cv.write_text("NEW TEXT")
+    prof.import_cv(cv, dest)
+    text = dest.read_text()
+    assert "OLD TEXT" not in text and "NEW TEXT" in text and "Target role" in text
+
+
+def test_pdf_uses_pdfkit_helper_when_available(tmp_path):
+    from openinterview.config import PROJECT_ROOT
+
+    if not (PROJECT_ROOT / "bin" / "pdftext").is_file():
+        pytest.skip("bin/pdftext not built")
+    src = tmp_path / "cv.txt"
+    src.write_text("Software Engineering Intern at Octopus Cards")
+    pdf = tmp_path / "cv.pdf"
+    subprocess.run(["cupsfilter", str(src)], stdout=pdf.open("wb"), stderr=subprocess.DEVNULL,
+                   check=True)
+    text = prof.extract_pdf(pdf)
+    assert "Software Engineering Intern" in text and prof.glued_words(text) == 0

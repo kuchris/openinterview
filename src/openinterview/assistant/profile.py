@@ -10,6 +10,7 @@ Privacy: the profile text is sent to the configured LLM provider with each quest
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -86,9 +87,7 @@ def load(path: Path) -> str:
     text = path.read_text(errors="replace")
     if is_template_only(text):
         return ""
-    # drop HTML comments (template instructions)
-    import re
-
+    # drop HTML comments (template instructions, AI notes)
     text = re.sub(r"<!--.*?-->", "", text, flags=re.S).strip()
     return text[:MAX_CHARS]
 
@@ -97,10 +96,7 @@ def extract_text(source: Path) -> str:
     """Extract plain text from a CV file."""
     suffix = source.suffix.lower()
     if suffix == ".pdf":
-        from pypdf import PdfReader
-
-        reader = PdfReader(str(source))
-        return "\n".join((page.extract_text() or "") for page in reader.pages).strip()
+        return extract_pdf(source)
     if suffix in TEXTUTIL_TYPES:
         out = subprocess.run(["textutil", "-convert", "txt", "-stdout", str(source)],
                              capture_output=True, text=True, timeout=60)
@@ -112,12 +108,46 @@ def extract_text(source: Path) -> str:
     raise ValueError(f"unsupported CV format: {suffix} (use PDF, Word, RTF, Pages or text)")
 
 
+def glued_words(text: str) -> int:
+    """Words of 20+ letters: a sign the extractor lost the spaces between words."""
+    return sum(1 for w in re.findall(r"[A-Za-z]+", text) if len(w) >= 20)
+
+
+def extract_pdf(source: Path) -> str:
+    """PDF text via Apple's PDFKit (bin/pdftext), falling back to pypdf. Some PDFs' font
+    encodings make pypdf glue words together ("SoftwareEngineeringIntern"); PDFKit keeps
+    the spacing, so the candidate with fewer glued words wins."""
+    from ..config import PROJECT_ROOT
+
+    candidates = []
+    helper = PROJECT_ROOT / "bin" / "pdftext"
+    if helper.is_file():
+        out = subprocess.run([str(helper), str(source)], capture_output=True, text=True, timeout=60)
+        if out.returncode == 0 and out.stdout.strip():
+            candidates.append(out.stdout.strip())
+    if not candidates or glued_words(candidates[0]) > 0:
+        from pypdf import PdfReader
+
+        reader = PdfReader(str(source))
+        text = "\n".join((page.extract_text() or "") for page in reader.pages).strip()
+        if text:
+            candidates.append(text)
+    if not candidates:
+        return ""
+    return min(candidates, key=glued_words)
+
+
+def strip_raw_cv(text: str) -> str:
+    """Drop a raw '## CV (file)' section left by an earlier plain import."""
+    return re.split(r"(?m)^## CV \(", text, maxsplit=1)[0].strip()
+
+
 def import_cv(source: Path, dest: Path) -> int:
     """Write the CV's text into the profile (keeping any notes already there). Returns chars."""
     text = extract_text(source)
     if not text:
         raise ValueError(f"no text found in {source.name} (is it a scanned image?)")
-    existing = dest.read_text(errors="replace") if dest.exists() else ""
+    existing = strip_raw_cv(dest.read_text(errors="replace")) if dest.exists() else ""
     notes = "" if not existing or is_template_only(existing) else existing.strip() + "\n\n"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(f"{notes}## CV ({source.name})\n\n{text}\n")
