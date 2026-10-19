@@ -57,7 +57,7 @@ class AssistantConfig:
     model: str | None = None             # opencode: "providerID/modelID"; openai: model name
     api_key_env: str = "OPENAI_API_KEY"  # openai provider only; key read from this env var
     mode: str = "practice"               # practice | immediate
-    listen_to: list[str] = field(default_factory=lambda: ["system"])
+    listen_to: list[str] = field(default_factory=lambda: ["auto"])  # auto | [system, mic]
     require_technical: bool = True
     timeout_s: float = 60.0
     max_cards: int = 50

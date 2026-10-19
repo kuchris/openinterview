@@ -127,8 +127,10 @@ utterance / retract), `metrics`. Partials are coalesced to one per source per 10
 The assistant is disabled by default, and transcription never depends on it. When on, it
 turns the interviewer's complete questions into practice cards:
 
-1. A **complete utterance** from "Them" becomes a card if it looks like a technical
-   question. Utterances are merged finals; partials and fragments are never sent. A
+1. A **complete utterance** becomes a card if it looks like a technical question. By
+   default (`listen_to: [auto]`), questions come from "Them" when system audio is captured.
+   In **mic-only** mode they come from "Me", so you can practise by reading questions aloud
+   and then answering. Utterances are merged finals; partials and fragments are never sent. A
    question needs:
    - a question form (`?`, "how would you…", "explain…", "walk me through…");
    - at least 4 words;

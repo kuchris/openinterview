@@ -51,6 +51,7 @@ class PracticeAssistant:
         self.provider: AnswerProvider | None = None
         self.enabled = False
         self.health = (False, "not checked")
+        self.session_source = "mic"
         self.detector = QuestionDetector(DetectorConfig(require_technical=cfg.require_technical))
         self.cards: OrderedDict[int, dict] = OrderedDict()
         self.context: deque[str] = deque(maxlen=12)
@@ -110,9 +111,20 @@ class PracticeAssistant:
 
     # -- session events --------------------------------------------------------------------
 
+    def listening_to(self) -> list[str]:
+        """Whose utterances may be questions. "auto": the interviewer ("Them") when system
+        audio is captured; your own mic when practising mic-only (reading questions aloud)."""
+        if self.cfg.listen_to != ["auto"]:
+            return self.cfg.listen_to
+        return ["mic"] if self.session_source == "mic" else ["system"]
+
     def on_message(self, msg: dict) -> None:
-        if msg.get("type") == "status" and msg.get("state") == "loading":
-            self.context.clear()  # new recording session
+        if msg.get("type") == "status":
+            if msg.get("source") and msg["source"] != self.session_source:
+                self.session_source = msg["source"]
+                self._publish_state()
+            if msg.get("state") == "loading":
+                self.context.clear()  # new recording session
             return
         if msg.get("type") != "transcript" or msg["event"]["kind"] != "utterance":
             return
@@ -121,14 +133,12 @@ class PracticeAssistant:
         if not text:
             return
         self.context.append(f"{SPEAKER.get(source, source)}: {text}")
-        if source == "mic":
-            self._attach_spoken_answer(text)
-        if not self.enabled or source not in self.cfg.listen_to:
-            return
-        if self.detector.check(text):
+        if self.enabled and source in self.listening_to() and self.detector.check(text):
             self._new_card(text, source)
+        elif source == "mic":
+            self._attach_spoken_answer(text)  # your answer to the latest question
 
-    # -- internals ---------------------------------------------------------------------------
+        # -- internals ---------------------------------------------------------------------------
 
     def _new_card(self, question: str, source: str) -> dict:
         with self._lock:
@@ -199,7 +209,7 @@ class PracticeAssistant:
     def state(self) -> dict:
         return {"enabled": self.enabled, "mode": self.cfg.mode, "provider": self.cfg.provider,
                 "healthy": self.health[0], "health": self.health[1],
-                "listen_to": self.cfg.listen_to}
+                "listen_to": self.listening_to()}
 
     def snapshot(self) -> dict:
         with self._lock:

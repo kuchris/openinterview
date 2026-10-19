@@ -257,6 +257,7 @@ def make_assistant(provider, enabled=True, **kw):
 def test_question_from_them_becomes_answered_card_with_spoken_answer_and_feedback():
     prov = FakeProvider()
     a, msgs = make_assistant(prov)
+    a.on_message(status("system"))
     a.on_message(utterance("system", "Tell me about yourself."))      # context, not a question
     a.on_message(utterance("system", "How does Python's GIL affect threads?"))
     assert wait_for(lambda: a.cards and next(iter(a.cards.values()))["status"] == "ready")
@@ -271,9 +272,27 @@ def test_question_from_them_becomes_answered_card_with_spoken_answer_and_feedbac
     assert any(m["type"] == "assistant_card" for m in msgs)
 
 
-def test_mic_utterances_are_not_questions_by_default_and_duplicates_skipped():
+def status(source):
+    return {"type": "status", "state": "running", "source": source}
+
+
+def test_mic_only_practice_takes_questions_from_me_and_answers_follow():
     prov = FakeProvider()
     a, _ = make_assistant(prov)
+    a.on_message(status("mic"))
+    assert a.state()["listen_to"] == ["mic"]
+    a.on_message(utterance("mic", "How does Python manage memory?"))
+    assert wait_for(lambda: len(prov.questions) == 1)
+    a.on_message(utterance("mic", "It uses reference counting plus a cycle collector."))
+    card = next(iter(a.cards.values()))
+    assert card["question"] == "How does Python manage memory?"
+    assert card["spoken"] == ["It uses reference counting plus a cycle collector."]
+
+
+def test_with_system_audio_mic_utterances_are_not_questions_and_duplicates_skipped():
+    prov = FakeProvider()
+    a, _ = make_assistant(prov)
+    a.on_message(status("both"))
     a.on_message(utterance("mic", "How would you design a rate limiter for a REST API?"))
     a.on_message(utterance("system", "How would you design a cache for a database?"))
     a.on_message(utterance("system", "How would you design a cache for a database"))
@@ -285,6 +304,7 @@ def test_mic_utterances_are_not_questions_by_default_and_duplicates_skipped():
 def test_disabled_assistant_sends_nothing():
     prov = FakeProvider()
     a, _ = make_assistant(prov, enabled=False)
+    a.on_message(status("system"))
     a.on_message(utterance("system", "How does Python's GIL affect threads?"))
     time.sleep(0.2)
     assert not a.cards and not prov.questions
@@ -292,6 +312,7 @@ def test_disabled_assistant_sends_nothing():
 
 def test_provider_failure_marks_card_without_raising():
     a, _ = make_assistant(FakeProvider(fail=True))
+    a.on_message(status("system"))
     a.on_message(utterance("system", "What is a deadlock in concurrency?"))
     assert wait_for(lambda: a.cards and next(iter(a.cards.values()))["status"] == "error")
     assert "expired" in next(iter(a.cards.values()))["error"]

@@ -44,6 +44,7 @@ assistant:
   model: opencode-go/deepseek-v4.1-flash  # "providerID/modelID" (null = OpenCode default); list: opencode models
   api_key_env: OPENAI_API_KEY  # openai provider only: the key is read from this env var
   mode: practice            # practice (answer hidden until you reveal) | immediate
-  listen_to: [system]       # whose complete sentences may be questions: system ("Them"), mic
+  listen_to: [auto]         # whose sentences may be questions: auto = "Them" when system audio
+                            # is captured, "Me" in mic-only practice; or e.g. [system, mic]
   require_technical: true   # ignore small talk like "How are you today?"
   timeout_s: 60
