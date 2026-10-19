@@ -554,6 +554,11 @@ func captureOwnWindow(_ window: NSWindow) -> CGImage? {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if let path = ProcessInfo.processInfo.environment["OPENINTERVIEW_UI_ICON"] {
+            writeAppIcon(to: path)  // development aid: export the icon and quit
+            exit(0)
+        }
+        NSApp.applicationIconImage = makeAppIcon()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         // Development aid: render this window to a PNG (no screen-recording permission

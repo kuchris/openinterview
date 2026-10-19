@@ -36,7 +36,7 @@ build() {  # name, extra swiftc flags, sources...
 }
 
 build sysaudio "" helpers/common/common.swift helpers/sysaudio/main.swift
-build openinterview-ui "-parse-as-library" helpers/ui/OpenInterviewApp.swift helpers/ui/Views.swift helpers/ui/History.swift
+build openinterview-ui "-parse-as-library" helpers/ui/OpenInterviewApp.swift helpers/ui/Views.swift helpers/ui/History.swift helpers/ui/AppIcon.swift
 build pdftext "" helpers/pdftext/main.swift
 if [[ "$(sw_vers -productVersion | cut -d. -f1)" -ge 26 ]]; then
   build appleasr "" helpers/common/common.swift helpers/appleasr/main.swift \

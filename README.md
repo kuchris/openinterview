@@ -1,3 +1,5 @@
+<img src="docs/images/icon.png" width="96" alt="OpenInterview icon">
+
 # OpenInterview
 
 Local, low-latency speech recognition and an AI practice coach for job interviews on
