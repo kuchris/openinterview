@@ -60,6 +60,10 @@ class _Stream:
         self.helper_rss_mb = 0.0
         self.restarts = 0
         self.threads: list[threading.Thread] = []
+        # Sample index the current helper's timeline starts at. Apple's analyzer only
+        # recognizes audio on a timeline that starts at 0, so a restarted or recycled
+        # helper gets times relative to its first sample; results are shifted back.
+        self.base = 0
 
     def start(self, args: list[str]) -> None:
         self.args = args
@@ -99,6 +103,7 @@ class _Stream:
         """Ring buffer -> helper stdin, as audio arrives. True if the source ended normally."""
         buf = self.src.buffer
         pos = buf.total_written
+        self.base = pos
         stdin = proc.stdin
         finished = False
         try:
@@ -117,12 +122,13 @@ class _Stream:
                 n = res.samples.size - res.samples.size % FRAME
                 if n == 0:
                     continue
-                stdin.write(struct.pack("<IIQ", AUDIO, n, res.start_index)
+                stdin.write(struct.pack("<IIQ", AUDIO, n, res.start_index - self.base)
                             + res.samples[:n].astype("<f4", copy=False).tobytes())
                 pos = res.start_index + n
             rest = buf.read(pos)
             if rest.samples.size:
-                stdin.write(struct.pack("<IIQ", AUDIO, rest.samples.size, rest.start_index)
+                stdin.write(struct.pack("<IIQ", AUDIO, rest.samples.size,
+                                        rest.start_index - self.base)
                             + rest.samples.astype("<f4", copy=False).tobytes())
             finished = True
         except (BrokenPipeError, ValueError, OSError):
@@ -138,6 +144,23 @@ class _Stream:
             except subprocess.TimeoutExpired:
                 proc.kill()
         return finished
+
+    def _absolute(self, msg: dict) -> dict:
+        """Helper times (seconds from its first sample) -> seconds from the buffer start."""
+        off = self.base / SR
+        if not off:
+            return msg
+        msg = dict(msg)
+        for k in ("start", "end"):
+            msg[k] = msg[k] + off
+        if msg.get("words_end", -1) >= 0:
+            msg["words_end"] += off
+        if msg.get("words_start", -1) >= 0:
+            msg["words_start"] += off
+        if msg.get("pieces"):
+            msg["pieces"] = [{**p, "start": p["start"] + off, "end": p["end"] + off}
+                             for p in msg["pieces"]]
+        return msg
 
     def _read_results(self, proc: subprocess.Popen, launch_ready: threading.Event) -> None:
         for line in proc.stdout:
@@ -155,7 +178,7 @@ class _Stream:
             elif kind == "done":
                 self.helper_rss_mb = max(self.helper_rss_mb, msg.get("max_rss_mb", 0.0))
             elif kind == "result":
-                self.owner._on_result(self, msg)
+                self.owner._on_result(self, self._absolute(msg))
         launch_ready.set()
 
 
@@ -293,9 +316,14 @@ class AppleStreamingTranscriber:
             self.final_latency.add(latency)
             self.on_event(TranscriptEvent("final", st.src.name, seg, text, self._rel(start_t),
                                           self._rel(end_t), latency_s=latency))
-            for u in self._sentences.add_final(st.src.name, text, self._rel(start_t),
-                                               self._rel(end_t), now):
-                self._emit_utterance(u)
+            # A final can hold several sentences; the helper splits it at pauses.
+            pieces = [(p["text"].strip(), buf.time_at(int(p["start"] * SR)) or start_t,
+                       buf.time_at(int(p["end"] * SR)) or end_t)
+                      for p in msg.get("pieces") or [] if p.get("text", "").strip()]
+            for ptext, p_start, p_end in pieces or [(text, start_t, end_t)]:
+                for u in self._sentences.add_final(st.src.name, ptext, self._rel(p_start),
+                                                   self._rel(p_end), now):
+                    self._emit_utterance(u)
 
     def _on_helper_restart(self, st: _Stream) -> None:
         with self._lock:

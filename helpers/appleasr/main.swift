@@ -52,15 +52,72 @@ func makeDictation(locale: Locale) -> DictationTranscriber {
                          attributeOptions: [.audioTimeRange])
 }
 
+/// Pause between words that splits a final into pieces. One final can span several
+/// sentences, and Chinese / Japanese results often carry no punctuation between them.
+let pieceGap = 0.6
+
+/// Roughly how long a recognized run takes to say: ~0.4 s per Chinese / Japanese
+/// character, ~0.08 s per letter otherwise.
+func expectedDuration(_ text: String) -> Double {
+    var cjk = 0, other = 0
+    for scalar in text.unicodeScalars {
+        switch scalar.value {
+        case 0x3040...0x30FF, 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xF900...0xFAFF: cjk += 1
+        default: if CharacterSet.alphanumerics.contains(scalar) { other += 1 }
+        }
+    }
+    return max(0.3, 0.4 * Double(cjk) + 0.08 * Double(other))
+}
+
 func emitResult(final: Bool, text: AttributedString, range: CMTimeRange) {
     // range covers the audio the recognizer has heard; words_end is where the last
     // recognized word actually ends (per-run audioTimeRange attributes).
-    var wordsEnd = -1.0
+    var wordsEnd = -1.0, wordsStart = -1.0
+    var pieces: [[String: Any]] = []
+    var current = "", start = -1.0, end = -1.0
     for run in text.runs {
-        if let tr = run.audioTimeRange { wordsEnd = max(wordsEnd, tr.end.seconds) }
+        let piece = String(text[run.range].characters)
+        if let tr = run.audioTimeRange {
+            wordsEnd = max(wordsEnd, tr.end.seconds)
+            if wordsStart < 0 { wordsStart = tr.start.seconds }
+            // A pause shows up as a gap between words, or as a word far longer than it takes
+            // to say (the recognizer gives the preceding silence to it: a Chinese character
+            // spanning two seconds).
+            let said = max(tr.start.seconds, tr.end.seconds - expectedDuration(piece))
+            if final && end >= 0 && said - end >= pieceGap
+                && !current.trimmingCharacters(in: .whitespaces).isEmpty {
+                pieces.append(["text": current, "start": start, "end": end])
+                current = ""
+                start = -1
+            }
+            if start < 0 { start = said }
+            end = max(end, tr.end.seconds)
+        }
+        current += piece
+        // The recognizer gives the silence after a sentence to its punctuation ("。" can
+        // span two seconds), so a long punctuation run is a pause too.
+        if final, let tr = run.audioTimeRange,
+           piece.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters)).isEmpty,
+           tr.end.seconds - tr.start.seconds >= pieceGap,
+           !current.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters)).isEmpty {
+            pieces.append(["text": current, "start": start, "end": tr.start.seconds])
+            current = ""
+            start = -1
+            end = -1
+        }
     }
-    emit(["type": "result", "final": final, "text": String(text.characters),
-          "start": range.start.seconds, "end": range.end.seconds, "words_end": wordsEnd])
+    var msg: [String: Any] = ["type": "result", "final": final, "text": String(text.characters),
+                              "start": range.start.seconds, "end": range.end.seconds,
+                              "words_start": wordsStart, "words_end": wordsEnd]
+    // Finals always carry their pieces: their times are where speech was actually said,
+    // so the caller can see pauses between finals too.
+    if final {
+        if !current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && start >= 0 {
+            pieces.append(["text": current, "start": start, "end": end])
+        }
+        msg["pieces"] = pieces
+    }
+    emit(msg)
 }
 
 func makeTranscriber(locale: Locale, fast: Bool) -> SpeechTranscriber {
@@ -93,7 +150,24 @@ func statusString(_ s: AssetInventory.Status) -> String {
     }
 }
 
-func ensureInstalled(_ transcriber: any SpeechModule) async throws {
+/// An app may reserve only a few speech locales (5). Switching interview languages can hit
+/// that limit ("Too many allocated locales"), so release another non-English reservation
+/// to make room. The downloaded model stays on disk; reserving it again later is quick.
+func makeRoomForLocale(_ locale: Locale) async {
+    let wanted = locale.identifier(.bcp47)
+    let reserved = await AssetInventory.reservedLocales
+    guard !reserved.contains(where: { $0.identifier(.bcp47) == wanted }),
+          reserved.count >= AssetInventory.maximumReservedLocales else { return }
+    let others = reserved.filter { $0.identifier(.bcp47) != wanted }
+    if let victim = others.first(where: { !$0.identifier(.bcp47).hasPrefix("en") }) ?? others.first {
+        _ = await AssetInventory.release(reservedLocale: victim)
+        emit(["type": "warning",
+              "message": "released speech locale \(victim.identifier(.bcp47)) to make room for \(wanted)"])
+    }
+}
+
+func ensureInstalled(_ transcriber: any SpeechModule, locale: Locale? = nil) async throws {
+    if let locale { await makeRoomForLocale(locale) }
     let status = await AssetInventory.status(forModules: [transcriber])
     if status == .installed { return }
     if status == .unsupported {
@@ -199,7 +273,7 @@ func runStream() async throws {
     let module: any SpeechModule = dictation
         ? makeDictation(locale: locale)
         : makeTranscriber(locale: locale, fast: CommandLine.arguments.contains("--fast"))
-    try await ensureInstalled(module)
+    try await ensureInstalled(module, locale: locale)
 
     let analyzer = SpeechAnalyzer(modules: [module],
                                   options: .init(priority: .userInitiated, modelRetention: .processLifetime))
@@ -253,7 +327,7 @@ do {
               "locale": locale.identifier, "assets": statusString(status)])
     case "install":
         let locale = try await resolveLocale()
-        try await ensureInstalled(makeTranscriber(locale: locale, fast: false))
+        try await ensureInstalled(makeTranscriber(locale: locale, fast: false), locale: locale)
         emit(["type": "installed", "locale": locale.identifier])
     case "stream":
         try await runStream()

@@ -83,7 +83,7 @@ struct ContentView: View {
         if m.running && !m.currentTitle.isEmpty {
             return "\(m.currentTitle) · \(src)\(m.currentSaving ? " · saving" : "")"
         }
-        return "\(src) · \(m.model)"
+        return "\(src) · \(m.model)" + (m.language == "en" ? "" : " · \(m.languageName)")
     }
 }
 
@@ -124,7 +124,11 @@ struct SettingsPopover: View {
                 }
                 .pickerStyle(.segmented)
                 Picker("Model", selection: $m.model) {
-                    ForEach(m.models, id: \.self) { Text($0).tag($0) }
+                    ForEach(m.languageModels, id: \.self) { Text($0).tag($0) }
+                }
+                if m.language != "en" {
+                    Text("Models that support \(m.languageName). Choose the language when you start a session.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Picker("Microphone", selection: $m.device) {
                     Text("System default").tag("")
@@ -148,7 +152,7 @@ struct SettingsPopover: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(m.profileLoaded ? "Loaded · \(m.profileWords) words" : "No profile yet")
                         Text(m.profileLoaded ? "Behavioural answers use your background."
-                                             : "Answers use [placeholders] for your details.")
+                                             : "Answers stay general until you add your background.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -644,6 +648,14 @@ struct NewSessionSheet: View {
                 TextField("Title", text: $m.sessionTitle, prompt: Text("e.g. Mock interview, round 2"))
                 TextField("Company", text: $m.company, prompt: Text("optional"))
                 TextField("Role", text: $m.role, prompt: Text("optional"))
+                Picker("Interview language", selection: $m.language) {
+                    ForEach(m.languages) { Text($0.name).tag($0.code) }
+                }
+                .onChange(of: m.language) { m.fitModelToLanguage(changed: true) }
+                if m.language != "en" {
+                    Text("Transcribed with \(m.model); answers are written in \(m.languageName) to say out loud.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Job description")
                     TextEditor(text: $m.jobDescription)

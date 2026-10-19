@@ -150,7 +150,10 @@ def create_app(cfg: Config, session_factory=None, provider_factory=make_provider
                           mic_device=body.get("mic_device"),
                           save=body.get("save", body.get("save_transcript")),
                           save_audio=body.get("save_audio"),
-                          title=str(body.get("title") or ""), target=target)
+                          title=str(body.get("title") or ""), target=target,
+                          language=body.get("language"))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(409, str(exc)) from exc
         return session.status()
@@ -322,12 +325,20 @@ def _options(cfg: Config) -> dict:
         devices = [d for d in list_input_devices() if "blackhole" not in d["name"].lower()]
     except Exception:
         devices = []
+    from ..languages import LANGUAGES, preferred_models, supports
+
     models = [m for m in MODELS if m != "apple" or apple_available()]
     return {
         "models": models,
+        "languages": [{"code": l.code, "name": l.name,
+                       "models": [m for m in models if supports(m, l.code)],
+                       "preferred": [m for m in preferred_models(l.code, apple_available())
+                                     if m in models]}
+                      for l in LANGUAGES.values()],
         "sources": ["mic", "system", "both"],
         "devices": devices,
         "defaults": {"model": cfg.asr.model, "source": cfg.audio.source,
+                     "language": cfg.asr.language,
                      "mic_device": cfg.audio.mic_device,
                      "save_transcript": cfg.storage.save_sessions,
                      "save_sessions": cfg.storage.save_sessions,

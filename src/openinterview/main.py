@@ -410,6 +410,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--config", type=Path, default=None)
     p.add_argument("--model",
                    help="tiny.en | base.en | small.en | large-v3-turbo | parakeet-v2 | apple")
+    p.add_argument("--language", "-l",
+                   help="en | ja | zh | zh-TW | yue (Cantonese); default from config")
     p.add_argument("--no-save", action="store_true", help="don't save this run as a session")
     p.add_argument("--no-audio", action="store_true", help="save the session without audio")
     p.add_argument("-v", "--verbose", action="store_true")
@@ -471,6 +473,16 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(args.config)
     if args.model:
         cfg.asr.model = args.model
+    if args.language:
+        from .asr.apple_stream import available as apple_available
+        from .languages import get as get_language, resolve_model
+
+        cfg.asr.language = get_language(args.language).code
+        resolved = resolve_model(cfg.asr.model, cfg.asr.language, apple_available())
+        if resolved != cfg.asr.model:
+            print(f"{cfg.asr.model} is English-only: using {resolved} for "
+                  f"{get_language(args.language).name}", file=sys.stderr)
+            cfg.asr.model = resolved
     if args.no_save:
         cfg.storage.save_sessions = False
     if args.no_audio:

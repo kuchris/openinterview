@@ -19,6 +19,7 @@ MODEL_REPOS = {
     "tiny.en": "mlx-community/whisper-tiny.en-mlx",
     "base.en": "mlx-community/whisper-base.en-mlx",
     "small.en": "mlx-community/whisper-small.en-mlx",
+    "small": "mlx-community/whisper-small-mlx",  # multilingual (Japanese, Mandarin)
     "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
 }
 

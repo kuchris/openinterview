@@ -30,6 +30,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from ..audio.buffer import AudioRingBuffer
+from ..text import tokens
 from .filters import normalize_text
 
 HOP = 320  # 20 ms at 16 kHz
@@ -152,7 +153,7 @@ class EchoTextFilter:
     def add(self, source: str, segment_id: int, text: str, start: float,
             end: float) -> tuple[bool, list[int]]:
         """Register a final. Returns (drop_this, mic_segment_ids_to_retract)."""
-        f = _Final(source, segment_id, normalize_text(text).split(), start, end)
+        f = _Final(source, segment_id, tokens(normalize_text(text)), start, end)
         if source == "mic":
             if any(o.source == "system" and self._match(f, o) for o in self._recent):
                 return True, []

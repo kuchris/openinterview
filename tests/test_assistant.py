@@ -399,7 +399,7 @@ def test_new_session_clears_cards_and_sets_provider_context():
     a.on_message({"type": "status", "state": "loading", "source": "system",
                   "target": {"company": "Acme"}})
     assert not a.cards and a.target == {"company": "Acme"}
-    assert wait_for(lambda: prov.contexts == [{"company": "Acme"}])
+    assert wait_for(lambda: prov.contexts == [{"company": "Acme", "language": "en"}])
     assert msgs[-1]["type"] == "assistant_snapshot" and msgs[-1]["cards"] == []
     # the same question in the new session is asked again (fresh duplicate memory)
     a.on_message(utterance("system", "How does Python manage memory?"))
@@ -481,3 +481,72 @@ def test_prep_check_and_note_api(tmp_path):
                                                        "text": "I use their API daily."}).json()
         assert info["loaded"] and "use their API daily" in (tmp_path / "profile.md").read_text()
         assert client.post("/api/profile/note", json={"text": ""}).status_code == 400
+
+
+# -- Japanese / Mandarin / Cantonese ------------------------------------------------------
+
+@pytest.mark.parametrize("text", [
+    "自己紹介をお願いします。", "プロセスとスレッドの違いは何ですか？",
+    "你为什么想加入我们公司？", "进程和线程有什么区别", "程序和執行緒有什麼差別？",
+    "咁你先介紹下你自己啦", "點解你想加入我哋公司？", "Cricess同 friend有咩分別",
+    "你會點樣幫支付API設計一個rate limiter？",
+])
+def test_detects_cjk_questions(text):
+    assert QuestionDetector().check(text)
+
+
+@pytest.mark.parametrize("text", [
+    "本日はお時間いただきありがとうございます。音声は聞こえますか？",
+    "你好，多謝你今日嚟面試。聽唔聽到我講嘢？", "好明白我記低先", "我是支付平台团队的负责人小王。",
+])
+def test_ignores_cjk_small_talk_and_statements(text):
+    assert not QuestionDetector().check(text)
+
+
+def test_cjk_repeat_with_opener_is_a_duplicate():
+    d = QuestionDetector()
+    assert d.check("进程和线程有什么区别？")
+    assert not d.check("不好意思，进程和线程有什么区别？")
+    assert d.check("你最大的缺点是什么？")
+
+
+@pytest.mark.parametrize("lang", ["en", "ja", "zh", "zh-TW", "yue"])
+def test_mock_scripts_match_detector_in_every_language(lang, capsys):
+    from openinterview import mock
+
+    assert mock.dry_run(mock.script(language=lang)) == 0
+
+
+def test_language_rules_and_model_resolution():
+    from openinterview.assistant.providers import coach_prompt
+    from openinterview.languages import resolve_model
+
+    assert "Cantonese" in coach_prompt("", {"language": "yue"})
+    assert "Cantonese" not in coach_prompt("", {"language": "en"})
+    assert resolve_model("small.en", "ja") == "large-v3-turbo"
+    assert resolve_model("small.en", "yue") == "large-v3-turbo"
+    assert resolve_model("small.en", "zh") == "apple"
+    assert resolve_model("small.en", "zh", apple_available=False) == "large-v3-turbo"
+    assert resolve_model("apple", "ja") == "apple"  # an explicit multilingual choice stays
+    assert resolve_model("small", "yue", apple_available=False) == "large-v3-turbo"
+    assert resolve_model("large-v3-turbo", "zh") == "large-v3-turbo"
+    assert resolve_model("small.en", "en") == "small.en"
+
+
+def test_cjk_tokens_agreement_and_sentences():
+    from openinterview.asr.agreement import LocalAgreement
+    from openinterview.asr.sentences import SentenceAssembler
+    from openinterview.text import join, tokens
+
+    assert tokens("我用Python寫API") == ["我", "用", "Python", "寫", "API"]
+    assert join(tokens("我用Python寫API，你呢？")) == "我用Python寫API，你呢？"
+    la = LocalAgreement()
+    la.update("你為什麼")
+    st = la.update("你為什麼想加入")
+    assert st.stable == "你為什麼" and st.unstable == "想加入"
+    sa = SentenceAssembler(merge_gap_s=1.2)
+    assert [u.text for u in sa.add_final("system", "點解你想", 0.0, 1.0, 0)] == []
+    assert [u.text for u in sa.add_final("system", "加入我哋？", 1.2, 2.0, 0)] == ["點解你想加入我哋？"]
+    sa.add_final("system", "好明白我記低先", 3.0, 4.0, 0)
+    out = sa.add_final("system", "唔好意思", 6.0, 6.5, 0)  # 2 s of silence in between
+    assert [u.text for u in out] == ["好明白我記低先"]

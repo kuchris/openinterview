@@ -30,10 +30,13 @@ def make_vad(kind: str = "silero"):
 
 def build_transcriber(cfg, sources, on_event):
     """Wire a transcriber from the app Config (used by CLI, benchmark, web server)."""
+    from ..languages import get as get_language
+
+    lang = get_language(cfg.asr.language)
     if cfg.asr.model == "apple":
         from .apple_stream import AppleStreamingTranscriber
 
-        return AppleStreamingTranscriber(sources, on_event, locale="en-US",
+        return AppleStreamingTranscriber(sources, on_event, locale=lang.apple_locale,
                                          vocabulary=cfg.asr.vocabulary_prompt,
                                          merge_gap_s=cfg.pipeline.merge_gap_s,
                                          echo_suppression=cfg.pipeline.echo_suppression)
@@ -55,13 +58,14 @@ def build_transcriber(cfg, sources, on_event):
         filters=FilterConfig(),
         max_finals=p.max_finals,
         degrade_at=p.degrade_at,
-        vocabulary_prompt=cfg.asr.vocabulary_prompt,
+        # An English prompt pulls Whisper towards English (or translation) output.
+        vocabulary_prompt=cfg.asr.vocabulary_prompt if lang.code == "en" else "",
         prompt_with_context=cfg.asr.prompt_with_context,
         merge_gap_s=p.merge_gap_s,
         echo_suppression=p.echo_suppression,
     )
     return StreamingTranscriber(
-        engine_factory=lambda: make_engine(cfg.asr.model, cfg.asr.language),
+        engine_factory=lambda: make_engine(cfg.asr.model, lang.whisper),
         sources=sources,
         on_event=on_event,
         vad_factory=lambda: make_vad(p.vad),

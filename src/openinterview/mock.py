@@ -32,6 +32,8 @@ import numpy as np
 
 from .asr.filters import normalize_text
 from .assistant.detector import QuestionDetector
+from .languages import get as get_language
+from .text import tokens
 
 TARGET = {
     "company": "Acme Pay",
@@ -69,11 +71,83 @@ SCRIPT = [
     Line("Thanks, that's all from me. We'll be in touch.", "ignore", "statement"),
 ]
 
+Q, I = "question", "ignore"
+
+# The same interview in other languages, line for line (same expectations as SCRIPT).
+SCRIPTS = {
+    "en": SCRIPT,
+    "ja": [
+        Line("本日はお時間いただきありがとうございます。音声は聞こえますか？", I, "small talk"),
+        Line("私は決済プラットフォームチームのリーダーの佐藤です。", I, "statement"),
+        Line("では、自己紹介をお願いします。", Q, "behavioural"),
+        Line("なぜ弊社で働きたいと思ったのですか？", Q, "behavioural"),
+        Line("プロセスとスレッドの違いは何ですか？", Q, "technical"),
+        Line("なるほど、わかりました。メモしておきます。", I, "statement"),
+        Line("すみません、プロセスとスレッドの違いは何ですか？", I, "repeat"),
+        Line("決済APIのレートリミッターをどのように設計しますか？", Q, "technical"),
+        Line("本番環境で難しい障害を調査した経験について教えてください。", Q, "behavioural"),
+        Line("決済リクエストを冪等にするにはどうしますか？", Q, "technical"),
+        Line("あなたの一番の弱みは何ですか？", Q, "behavioural"),
+        Line("チームメンバーと意見が対立した時、どう解決しましたか？", Q, "behavioural"),
+        Line("何か質問はありますか？", Q, "closing"),
+        Line("本日はありがとうございました。また連絡します。", I, "statement"),
+    ],
+    "zh": [
+        Line("你好，感谢你今天来参加面试。能听到我说话吗？", I, "small talk"),
+        Line("我是支付平台团队的负责人小王。", I, "statement"),
+        Line("那么，请先做一个自我介绍。", Q, "behavioural"),
+        Line("你为什么想加入我们公司？", Q, "behavioural"),
+        Line("进程和线程有什么区别？", Q, "technical"),
+        Line("好的，明白了，我记一下。", I, "statement"),
+        Line("不好意思，进程和线程有什么区别？", I, "repeat"),
+        Line("你会如何为支付API设计一个限流器？", Q, "technical"),
+        Line("说说你在生产环境中排查一个困难问题的经历。", Q, "behavioural"),
+        Line("你会怎么让支付请求做到幂等？", Q, "technical"),
+        Line("你最大的缺点是什么？", Q, "behavioural"),
+        Line("你和同事发生过冲突吗？你是怎么解决的？", Q, "behavioural"),
+        Line("你有什么问题想问我们吗？", Q, "closing"),
+        Line("好的，今天就到这里，我们会再联系你。", I, "statement"),
+    ],
+    "zh-TW": [
+        Line("你好，謝謝你今天來參加面試。聽得到我的聲音嗎？", I, "small talk"),
+        Line("我是支付平台團隊的負責人小王。", I, "statement"),
+        Line("那麼，請先簡單自我介紹一下。", Q, "behavioural"),
+        Line("你為什麼想加入我們公司？", Q, "behavioural"),
+        Line("程序和執行緒有什麼差別？", Q, "technical"),
+        Line("好的，了解，我記一下。", I, "statement"),
+        Line("不好意思，程序和執行緒有什麼差別？", I, "repeat"),
+        Line("你會怎麼為支付API設計限流機制？", Q, "technical"),
+        Line("說說你在正式環境排查困難問題的經驗。", Q, "behavioural"),
+        Line("你會怎麼讓支付請求做到冪等？", Q, "technical"),
+        Line("你最大的缺點是什麼？", Q, "behavioural"),
+        Line("你跟同事有過衝突嗎？你是怎麼解決的？", Q, "behavioural"),
+        Line("你有什麼問題想問我們嗎？", Q, "closing"),
+        Line("好，今天就到這裡，我們會再跟你聯絡。", I, "statement"),
+    ],
+    "yue": [
+        Line("你好，多謝你今日嚟面試。聽唔聽到我講嘢？", I, "small talk"),
+        Line("我係支付平台團隊嘅主管阿明。", I, "statement"),
+        Line("咁你先介紹下你自己啦。", Q, "behavioural"),
+        Line("點解你想加入我哋公司？", Q, "behavioural"),
+        Line("Process同thread有咩分別？", Q, "technical, mixed English"),
+        Line("好，明白，我記低先。", I, "statement"),
+        Line("唔好意思，process同thread有咩分別？", I, "repeat"),
+        Line("你會點樣幫支付API設計一個rate limiter？", Q, "technical, mixed English"),
+        Line("講下你喺production處理過最難搞嘅問題。", Q, "behavioural"),
+        Line("你會點樣令支付request做到idempotent？", Q, "technical, mixed English"),
+        Line("你最大嘅弱點係咩？", Q, "behavioural"),
+        Line("你同同事有冇試過有衝突？你點樣解決？", Q, "behavioural"),
+        Line("你有冇問題想問我哋？", Q, "closing"),
+        Line("好，今日就到呢度，我哋會再聯絡你。", I, "statement"),
+    ],
+}
+
 QUICK = [0, 2, 4, 5, 6, 10]  # small talk, intro, technical, statement, repeat, weakness
 
 
-def script(quick: bool = False) -> list[Line]:
-    return [SCRIPT[i] for i in QUICK] if quick else list(SCRIPT)
+def script(quick: bool = False, language: str = "en") -> list[Line]:
+    lines = SCRIPTS[language]
+    return [lines[i] for i in QUICK] if quick else list(lines)
 
 
 def dry_run(lines: list[Line]) -> int:
@@ -173,12 +247,12 @@ class Backend:
 
 
 def similarity(a: str, b: str) -> float:
-    return difflib.SequenceMatcher(a=normalize_text(a).split(),
-                                   b=normalize_text(b).split()).ratio()
+    return difflib.SequenceMatcher(a=tokens(normalize_text(a)),
+                                   b=tokens(normalize_text(b))).ratio()
 
 
 def drive(url: str, lines: list[Line], voice: str | None, rate: int, answer_timeout: float,
-          save: bool, model: str | None) -> int:
+          save: bool, model: str | None, language: str = "en") -> int:
     be = Backend(url)
     try:
         be.state()
@@ -195,7 +269,8 @@ def drive(url: str, lines: list[Line], voice: str | None, rate: int, answer_time
             print(f"note: assistant unavailable ({st['health']}); only detection is tested",
                   file=sys.stderr)
 
-    body = {"source": "system", "title": "Mock interview (test)", "target": TARGET,
+    title = "Mock interview (test)" + ("" if language == "en" else f" [{language}]")
+    body = {"source": "system", "title": title, "target": TARGET, "language": language,
             "save": save, "save_audio": save}
     if model:
         body["model"] = model
@@ -281,9 +356,10 @@ def report(rows) -> int:
 
 
 def main(args) -> int:
-    lines = script(args.quick)
+    language = get_language(getattr(args, "language", None)).code
+    lines = script(args.quick, language)
     if not args.voice and (args.render or args.app or args.url or args.play):
-        args.voice = default_voice()
+        args.voice = default_voice() if language == "en" else get_language(language).voice
     if args.render:
         secs = render(lines, Path(args.render), args.voice, args.rate)
         print(f"wrote {args.render} ({secs:.0f} s). Try: openinterview transcribe-file "
@@ -295,7 +371,7 @@ def main(args) -> int:
             print("the app is not running: start it with `openinterview app`", file=sys.stderr)
             return 2
         return drive(url, lines, args.voice, args.rate, args.answer_timeout,
-                     save=not args.no_save, model=args.model)
+                     save=not args.no_save, model=args.model, language=language)
     if args.play:
         print("Start a session (system or both) in the app first. Speaking in 3 s...",
               file=sys.stderr)

@@ -71,6 +71,15 @@ struct Card: Identifiable, Equatable {
     }
 }
 
+/// An interview language and the speech models that can transcribe it.
+struct LanguageOption: Identifiable, Equatable {
+    let code: String
+    let name: String
+    let models: [String]
+    let preferred: [String]
+    var id: String { code }
+}
+
 /// A likely interview question the profile cannot answer yet (pre-interview check).
 struct PrepGap: Identifiable, Equatable {
     let id = UUID()
@@ -98,6 +107,8 @@ final class AppModel: ObservableObject {
     @Published var devices: [String] = []
     @Published var source = "mic"
     @Published var model = "small.en"
+    @Published var language = UserDefaults.standard.string(forKey: "language") ?? "en"
+    @Published var languages: [LanguageOption] = []
     @Published var device = ""
     @Published var lines: [Line] = []
     @Published var partials: [String: Line] = [:]
@@ -174,6 +185,11 @@ final class AppModel: ObservableObject {
         guard let s = await request("GET", "api/state"),
               let o = s["options"] as? [String: Any] else { return }
         models = o["models"] as? [String] ?? []
+        languages = (o["languages"] as? [[String: Any]] ?? []).map {
+            LanguageOption(code: $0["code"] as? String ?? "", name: $0["name"] as? String ?? "",
+                           models: $0["models"] as? [String] ?? [],
+                           preferred: $0["preferred"] as? [String] ?? [])
+        }
         devices = (o["devices"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }
         if let d = o["defaults"] as? [String: Any] {
             model = UserDefaults.standard.string(forKey: "model") ?? d["model"] as? String ?? model
@@ -181,7 +197,30 @@ final class AppModel: ObservableObject {
             device = UserDefaults.standard.string(forKey: "device") ?? (d["mic_device"] as? String ?? "")
         }
         if !models.contains(model), let first = models.first { model = first }
+        if !languages.isEmpty && !languages.contains(where: { $0.code == language }) { language = "en" }
+        fitModelToLanguage()
         if !device.isEmpty && !devices.contains(device) { device = "" }
+    }
+
+    var languageName: String { languages.first { $0.code == language }?.name ?? language }
+
+    /// Speech models that can transcribe the chosen language.
+    var languageModels: [String] {
+        languages.first { $0.code == language }?.models ?? models
+    }
+
+    /// Keep a model that can transcribe the language; when the language changes, switch to
+    /// the one that worked best for it (Whisper turbo for Japanese / Cantonese, Apple for
+    /// Mandarin, the configured default for English).
+    func fitModelToLanguage(changed: Bool = false) {
+        let ok = languageModels
+        guard !ok.isEmpty else { return }
+        let best = languages.first { $0.code == language }?.preferred.first
+        if changed && language != "en", let best {
+            model = best
+        } else if !ok.contains(model) {
+            model = best ?? ok[0]
+        }
     }
 
     func toggleRecording() {
@@ -198,6 +237,7 @@ final class AppModel: ObservableObject {
         let d = UserDefaults.standard
         for (k, v) in [("model", model), ("source", source), ("device", device),
                        ("sessionTitle", sessionTitle), ("company", company), ("role", role),
+                       ("language", language),
                        ("jobDescription", jobDescription)] {
             d.set(v, forKey: k)
         }
@@ -208,6 +248,7 @@ final class AppModel: ObservableObject {
                 "source": source, "model": model,
                 "mic_device": device.isEmpty ? NSNull() : device,
                 "title": sessionTitle, "save": saveSession, "save_audio": saveSession && saveAudio,
+                "language": language,
                 "target": ["company": company, "role": role, "job_description": jobDescription],
             ])
         }

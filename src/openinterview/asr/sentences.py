@@ -4,8 +4,9 @@ A pause long enough to close a VAD segment (0.6 s) often falls mid-sentence ("so
 would approach this is ... um ... with a token bucket"). Downstream consumers, such as the
 Phase 5 question detector, want whole utterances. Finals ending without terminal
 punctuation are held, and the next final from the same source is appended. An utterance is
-released when it ends with . ? or !, when the speaker has been quiet for ``merge_gap_s``,
-or when it reaches ``max_hold_s``.
+released when it ends with . ? ! (or 。？！), when the speaker has been quiet for ``merge_gap_s``
+(by the clock, or by a gap of that size between the audio of two finals), or when it
+reaches ``max_hold_s``.
 """
 
 from __future__ import annotations
@@ -13,7 +14,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-_TERMINAL = re.compile(r"[.?!][\"')\]]*$")
+from ..text import join
+
+_TERMINAL = re.compile(r"[.?!。？！][\"')\]」』）]*$")
 
 
 @dataclass
@@ -43,15 +46,19 @@ class SentenceAssembler:
         text = text.strip()
         if not text:
             return []
+        out = []
         p = self._pending.get(source)
+        if p is not None and start - p.end >= self.merge_gap_s:  # a pause in the audio
+            out.append(self._release(source))
+            p = None
         if p is None:
             p = self._pending[source] = _Pending([text], start, end, now)
         else:
             p.parts.append(text)
             p.end, p.wall_end = end, now
         if _TERMINAL.search(text) or p.end - p.start >= self.max_hold_s:
-            return [self._release(source)]
-        return []
+            out.append(self._release(source))
+        return out
 
     def tick(self, now: float, speaking: dict[str, bool]) -> list[Utterance]:
         out = []
@@ -66,4 +73,4 @@ class SentenceAssembler:
 
     def _release(self, source: str) -> Utterance:
         p = self._pending.pop(source)
-        return Utterance(source, " ".join(p.parts), p.start, p.end)
+        return Utterance(source, join(p.parts), p.start, p.end)

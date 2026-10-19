@@ -88,6 +88,7 @@ class PracticeAssistant:
         self.health = (False, "not checked")
         self.session_source = "mic"
         self.target: dict = {}
+        self.language = "en"
         self.detector = QuestionDetector(DetectorConfig(filter_small_talk=cfg.filter_small_talk))
         self.cards: OrderedDict[int, dict] = OrderedDict()
         self.context: deque[str] = deque(maxlen=12)
@@ -106,8 +107,10 @@ class PracticeAssistant:
             if enabled and self.provider is None:
                 try:
                     self.provider = self.provider_factory(self.cfg)
-                    if self.target and hasattr(self.provider, "set_context"):
-                        self.provider.set_context(profile.load(self.profile_path), self.target)
+                    if (self.target or self.language != "en") and hasattr(self.provider,
+                                                                           "set_context"):
+                        self.provider.set_context(profile.load(self.profile_path),
+                                                  self._context())
                 except Exception as exc:
                     self.health = (False, str(exc))
                     self.enabled = False
@@ -119,19 +122,24 @@ class PracticeAssistant:
                     self._worker.start()
         self._publish_state()
 
-    def new_session(self, target: dict) -> None:
+    def _context(self) -> dict:
+        """What the provider tailors answers to: the target plus the interview language."""
+        return {**self.target, "language": self.language}
+
+    def new_session(self, target: dict, language: str = "en") -> None:
         """A new recording session: clear its questions and transcript context, and give the
-        model a fresh conversation that knows this interview's target."""
+        model a fresh conversation that knows this interview's target and language."""
         with self._lock:
             self.cards.clear()
             self.context.clear()
             self.target = dict(target)
+            self.language = language or "en"
             self.detector = QuestionDetector(DetectorConfig(
                 filter_small_talk=self.cfg.filter_small_talk))
             provider = self.provider
         if provider is not None and hasattr(provider, "set_context"):
             threading.Thread(target=provider.set_context,
-                             args=(profile.load(self.profile_path), self.target),
+                             args=(profile.load(self.profile_path), self._context()),
                              daemon=True).start()
         self.publish({"type": "assistant_snapshot", **self.snapshot()})
 
@@ -229,7 +237,7 @@ class PracticeAssistant:
                 self.session_source = msg["source"]
                 self._publish_state()
             if msg.get("state") == "loading":
-                self.new_session(msg.get("target") or {})
+                self.new_session(msg.get("target") or {}, msg.get("language") or "en")
             return
         if msg.get("type") != "transcript" or msg["event"]["kind"] != "utterance":
             return
@@ -315,7 +323,7 @@ class PracticeAssistant:
         return {"enabled": self.enabled, "mode": self.cfg.mode, "provider": self.cfg.provider,
                 "healthy": self.health[0], "health": self.health[1],
                 "listen_to": self.listening_to(), "profile": self.profile_info(),
-                "target": self.target}
+                "target": self.target, "language": self.language}
 
     def snapshot(self) -> dict:
         with self._lock:

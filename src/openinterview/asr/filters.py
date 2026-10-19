@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from ..text import has_cjk, join, tokens
 from .engine import ASRResult, Segment
 
 # Known silence/noise hallucinations. Only dropped when the decode was also unconfident or
@@ -26,6 +27,18 @@ BLOCKLIST = {
     "thanks",
     "bye",
     "you",
+    # Whisper's Japanese / Chinese silence hallucinations (subtitle credits, outros)
+    "ご視聴ありがとうございました",
+    "ご清聴ありがとうございました",
+    "字幕由amaraorg社区提供",
+    "字幕由amaraorg社區提供",
+    "請不吝點贊訂閱轉發打賞支持明鏡與點點欄目",
+    "请不吝点赞订阅转发打赏支持明镜与点点栏目",
+    "謝謝觀看",
+    "谢谢观看",
+    "多謝收睇",
+    "謝謝",
+    "谢谢",
 }
 
 _PUNCT = re.compile(r"[^\w\s']")
@@ -47,8 +60,11 @@ class FilterConfig:
 
 
 def collapse_repeats(text: str, max_repeats: int = 2, max_ngram: int = 6) -> str:
-    """Collapse runs of the same 1..max_ngram word sequence repeated > max_repeats times."""
-    words = text.split()
+    """Collapse runs of the same 1..max_ngram word sequence repeated > max_repeats times
+    (characters for Chinese / Japanese)."""
+    words = tokens(text)
+    if has_cjk(text):  # one token per character: "哈哈哈" is speech, "的的的的的的" a loop
+        max_repeats, max_ngram = max(max_repeats, 3), max_ngram * 2
     if len(words) < max_repeats + 1:
         return text
     changed = True
@@ -71,7 +87,7 @@ def collapse_repeats(text: str, max_repeats: int = 2, max_ngram: int = 6) -> str
                     out.append(words[i])
                     i += 1
             words = out
-    return " ".join(words)
+    return join(words)
 
 
 def _segment_ok(seg: Segment, cfg: FilterConfig) -> bool:
@@ -88,7 +104,7 @@ def clean_result(result: ASRResult, speech_ratio: float = 1.0,
     cfg = cfg or FilterConfig()
     segments = [s for s in result.segments if _segment_ok(s, cfg)] if result.segments else []
     if result.segments:
-        text = " ".join(s.text for s in segments).strip()
+        text = join([s.text for s in segments])
     else:
         text = result.text.strip()
     if not text:
@@ -120,4 +136,4 @@ class DuplicateSuppressor:
         prev = self._last.get(source)
         self._last[source] = (norm, t)
         return bool(prev and norm and prev[0] == norm and t - prev[1] <= self.window_s
-                    and len(norm.split()) >= self.min_words)
+                    and len(tokens(norm)) >= self.min_words)

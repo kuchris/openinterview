@@ -14,6 +14,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from ..text import join, tokens
+
 _NORM = re.compile(r"[^\w']+")
 
 
@@ -38,11 +40,11 @@ class PartialState:
 
     @property
     def stable(self) -> str:
-        return " ".join(self.committed)
+        return join(self.committed)
 
     @property
     def unstable(self) -> str:
-        return " ".join(self.tail)
+        return join(self.tail)
 
 
 class LocalAgreement:
@@ -52,7 +54,7 @@ class LocalAgreement:
         self.state = PartialState()
 
     def update(self, hypothesis: str) -> PartialState:
-        words = hypothesis.split()
+        words = tokens(hypothesis)  # characters for Chinese / Japanese
         s = self.state
         k = len(s.committed)
         # Only words after the committed prefix are candidates. If the new hypothesis

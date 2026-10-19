@@ -13,7 +13,7 @@ asr:
   # base.en: ~half the memory, ~0.2 s faster finals, ~2x the errors. apple: tiny memory
   # footprint, runs on the Neural Engine, but weak on jargon. See README "Benchmarks".
   model: small.en          # tiny.en | base.en | small.en | large-v3-turbo | parakeet-v2 | parakeet-v3 | apple
-  language: en
+  language: en             # en | ja | zh | zh-TW | yue (Cantonese); non-English needs apple or large-v3-turbo
   # Domain terms that bias Whisper decoding toward the right spelling (Whisper only).
   vocabulary_prompt: "Python, GIL, asyncio, Kubernetes, PostgreSQL, Redis, REST API, gRPC, idempotent, O(n log n)."
   prompt_with_context: true  # also prompt with the tail of the previous sentence

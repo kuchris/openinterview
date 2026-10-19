@@ -62,7 +62,7 @@ class Session:
     def start(self, source: str | None = None, model: str | None = None,
               mic_device: str | int | None = None, save: bool | None = None,
               save_audio: bool | None = None, title: str = "",
-              target: dict | None = None) -> None:
+              target: dict | None = None, language: str | None = None) -> None:
         with self._lock:
             if self.state in ("loading", "running", "stopping"):
                 raise RuntimeError(f"session is {self.state}")
@@ -70,7 +70,12 @@ class Session:
             audio = replace(cfg.audio, source=source or cfg.audio.source,
                             mic_device=mic_device if mic_device not in ("", None)
                             else cfg.audio.mic_device)
-            asr = replace(cfg.asr, model=model or cfg.asr.model)
+            from .asr.apple_stream import available as apple_available
+            from .languages import get as get_language, resolve_model
+
+            lang = get_language(language or cfg.asr.language).code  # ValueError if unknown
+            asr = replace(cfg.asr, language=lang,
+                          model=resolve_model(model or cfg.asr.model, lang, apple_available()))
             storage = replace(cfg.storage,
                               save_sessions=cfg.storage.save_sessions if save is None else save,
                               save_audio=cfg.storage.save_audio if save_audio is None else save_audio)
@@ -218,6 +223,7 @@ class Session:
             "error": self.error,
             "source": self.cfg.audio.source,
             "model": self.cfg.asr.model,
+            "language": self.cfg.asr.language,
             "saving": self.record is not None,
             "session_id": self.record.meta["id"] if self.record is not None else None,
             "title": self.title,

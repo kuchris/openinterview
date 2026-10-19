@@ -25,6 +25,7 @@ import numpy as np
 
 from ..audio.source import AudioSource
 from ..metrics import RollingStat
+from ..text import join
 from .agreement import LocalAgreement
 from .echo import EchoGate, EchoTextFilter
 from .engine import ASREngine
@@ -328,7 +329,7 @@ class StreamingTranscriber:
             self.partial_lag.add(done - job.end_time)
             self.on_event(TranscriptEvent(
                 "partial", job.source, job.segment_id,
-                " ".join(x for x in (state.stable, state.unstable) if x),
+                join([state.stable, state.unstable]),
                 start, end, state.stable, state.unstable,
                 done - job.onset_time, result.inference_seconds,
             ))

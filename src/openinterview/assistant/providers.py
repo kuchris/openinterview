@@ -82,12 +82,26 @@ def target_text(target: dict | None) -> str:
             "guess others):\n<<<\n" + "\n".join(parts) + "\n>>>")
 
 
+def language_rules(code: str | None) -> str:
+    """For interviews not in English: answer in that language, in a style to say aloud."""
+    from ..languages import get
+
+    if not code or code == "en":
+        return ""
+    lang = get(code)
+    return (f"\n\nThis interview is in {lang.name}. Questions arrive in {lang.name} (speech "
+            f"recognition may mix in English words). Write short_answer and key_points in "
+            f"{lang.answer_style}; keep them as short as the rules say. Write gap in English. "
+            "python_example stays code.")
+
+
 def coach_prompt(profile: str = "", target: dict | None = None) -> str:
-    """The coach's system prompt, with the candidate's profile and this interview's target
-    appended when present."""
+    """The coach's system prompt, with the candidate's profile, this interview's target and
+    its language (target["language"]) appended when present."""
+    lang = language_rules((target or {}).get("language"))
     if not profile.strip():
-        return COACH_PROMPT + target_text(target)
-    return (COACH_PROMPT + target_text(target) + "\n\nCandidate profile (facts about the person you are coaching; "
+        return COACH_PROMPT + target_text(target) + lang
+    return (COACH_PROMPT + target_text(target) + lang + "\n\nCandidate profile (facts about the person you are coaching; "
             "the only source of truth about them):\n<<<\n" + profile.strip() + "\n>>>\n"
             "Rules for using the profile: state only facts that are written in it, without "
             "embellishing (no added motives, feelings, anecdotes or numbers). If the profile "
