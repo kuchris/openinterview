@@ -7,6 +7,7 @@
   openinterview app                            native app window (recommended)
   openinterview profile [show|edit|import CV|prompt|paste|path]   personal profile
   openinterview serve [--port 8765]           local web dashboard
+  openinterview mock [--app | --play | --render F]   scripted mock interview (testing)
 """
 
 from __future__ import annotations
@@ -390,6 +391,12 @@ def cmd_app(args: argparse.Namespace, cfg: Config) -> int:
     return run_app(cfg)
 
 
+def cmd_mock(args: argparse.Namespace, cfg: Config) -> int:
+    from . import mock
+
+    return mock.main(args)
+
+
 def cmd_serve(args: argparse.Namespace, cfg: Config) -> int:
     from .web.server import serve
 
@@ -435,6 +442,18 @@ def build_parser() -> argparse.ArgumentParser:
     w = sub.add_parser("serve", help="local web dashboard (127.0.0.1)")
     w.add_argument("--port", type=int, default=8765)
     w.set_defaults(func=cmd_serve)
+
+    m = sub.add_parser("mock", help="scripted mock interview to test the system")
+    m.add_argument("--app", action="store_true", help="drive the running app and report")
+    m.add_argument("--url", help="drive a backend at URL (e.g. http://127.0.0.1:8765)")
+    m.add_argument("--play", action="store_true", help="only speak the script")
+    m.add_argument("--render", metavar="WAV", help="write the script to a 16 kHz WAV")
+    m.add_argument("--quick", action="store_true", help="6 lines instead of 14")
+    m.add_argument("--voice", help="macOS voice (say -v '?' lists them)")
+    m.add_argument("--rate", type=int, default=175, help="words per minute")
+    m.add_argument("--gap", type=float, default=2.0, help="pause after a line with --play")
+    m.add_argument("--answer-timeout", type=float, default=30.0)
+    m.set_defaults(func=cmd_mock)
 
     f = sub.add_parser("transcribe-file", help="replay a file through the live pipeline")
     f.add_argument("file")

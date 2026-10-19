@@ -404,3 +404,12 @@ def test_new_session_clears_cards_and_sets_provider_context():
     # the same question in the new session is asked again (fresh duplicate memory)
     a.on_message(utterance("system", "How does Python manage memory?"))
     assert wait_for(lambda: len(a.cards) == 1)
+
+
+def test_mock_interview_script_matches_the_detector(capsys):
+    from openinterview import mock
+
+    assert mock.dry_run(mock.script()) == 0
+    assert mock.dry_run(mock.script(quick=True)) == 0
+    lines = mock.script()
+    assert {ln.expect for ln in lines} == {"question", "ignore"}

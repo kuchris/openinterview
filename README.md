@@ -57,6 +57,7 @@ uv run openinterview --model apple run --source system   # Apple on-device strea
 uv run openinterview transcribe-file talk.wav --speed 1 --utterances  # replay a file live
 uv run openinterview run --no-audio                      # save the session as text only
 uv run openinterview run --no-save                       # save nothing
+uv run openinterview mock --app                          # scripted mock interview test
 ```
 
 Models:
@@ -174,6 +175,33 @@ storage:
 
 Audio recording captures the other party too. Only record with their consent, and where
 it is allowed.
+
+## Mock interview test
+
+`openinterview mock` checks the whole chain: audio, ASR, question detection and
+answers. An "interviewer" voice (macOS `say`) reads 14 lines for an "Acme Pay backend
+engineer" interview. The lines mix technical and behavioural questions with things that
+must be ignored: small talk, statements and a repeated question.
+
+```bash
+uv run openinterview mock                 # text only: what the detector decides per line
+uv run openinterview mock --app           # with the app open: run a session and report
+uv run openinterview mock --app --quick   # 6 lines
+uv run openinterview mock --play          # only speak (start a session yourself)
+uv run openinterview mock --render mock.wav   # 16 kHz WAV for transcribe-file
+```
+
+`--app` (or `--url` for `serve`) does the following:
+
+1. starts a system-audio session with the Acme Pay target, turning on the assistant if
+   it is off;
+2. speaks each line and waits for its answer;
+3. stops and prints, for each line, expected vs detected, the answer time and the start
+   of each answer.
+
+It uses an English voice (Samantha, Daniel or Karen) even if your Mac's default voice is
+another language. `--voice NAME` picks one. The run is saved as "Mock interview (test)"
+in History unless you add `--no-save` (`openinterview --no-save mock --app`).
 
 ## Web dashboard (alternative)
 

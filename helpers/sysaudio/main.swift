@@ -64,6 +64,15 @@ func deviceUID(_ device: AudioObjectID) throws -> String {
     return value as String
 }
 
+func nominalRate(_ device: AudioObjectID) throws -> Double {
+    var address = globalAddress(kAudioDevicePropertyNominalSampleRate)
+    var rate = Float64(0)
+    var size = UInt32(MemoryLayout<Float64>.size)
+    try check(AudioObjectGetPropertyData(device, &address, 0, nil, &size, &rate),
+              "get nominal sample rate")
+    return rate
+}
+
 func tapFormat(_ tap: AudioObjectID) throws -> AudioStreamBasicDescription {
     var address = globalAddress(kAudioTapPropertyFormat)
     var asbd = AudioStreamBasicDescription()
@@ -124,21 +133,29 @@ final class SystemAudioCapture {
         try check(AudioHardwareCreateAggregateDevice(aggregate as CFDictionary, &aggregateID),
                   "create aggregate device")
 
+        // The IO proc delivers the tap at the aggregate device's rate, which follows the
+        // output device. It can differ from the tap's own format (e.g. Bluetooth headsets in
+        // call mode run at 16/24 kHz), and treating it as 48 kHz plays speech ~3x too fast.
+        let tapRate = asbd.mSampleRate
+        let deviceRate = (try? nominalRate(aggregateID)) ?? 0
+        let inRate = deviceRate > 0 ? deviceRate : tapRate
+
         let channels = Int(asbd.mChannelsPerFrame)
         let nonInterleaved = asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0
         let isFloat = asbd.mFormatFlags & kAudioFormatFlagIsFloat != 0 && asbd.mBitsPerChannel == 32
         guard isFloat else {
             throw CoreAudioError(what: "unsupported tap format (expected float32)", status: -1)
         }
-        inFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: asbd.mSampleRate,
+        inFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: inRate,
                                  channels: 1, interleaved: false)
         outFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: outputRate,
                                   channels: 1, interleaved: false)
-        if asbd.mSampleRate != outputRate {
+        if inRate != outputRate {
             converter = AVAudioConverter(from: inFormat, to: outFormat)
             converter?.sampleRateConverterQuality = AVAudioQuality.high.rawValue
         }
-        emit(["event": "format", "sample_rate": asbd.mSampleRate, "channels": channels,
+        emit(["event": "format", "sample_rate": inRate, "tap_rate": tapRate,
+              "device_rate": deviceRate, "channels": channels,
               "interleaved": !nonInterleaved, "output_rate": outputRate])
 
         try check(AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, ioQueue) {
@@ -147,6 +164,22 @@ final class SystemAudioCapture {
         }, "create IO proc")
         try check(AudioDeviceStart(aggregateID, procID), "start device")
         emit(["event": "started"])
+    }
+
+    /// Calls `onChange` if the rate the IO proc delivers changes after start (the output
+    /// device switched mode, or another app changed its rate). The converter is built for
+    /// one rate, so the caller restarts.
+    func watchRate(onChange: @escaping (Double) -> Void) {
+        let expected = inFormat.sampleRate
+        let recheck: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            guard let self else { return }
+            let now = (try? nominalRate(self.aggregateID)) ?? expected
+            if now > 0 && now != expected { onChange(now) }
+        }
+        var rateAddress = globalAddress(kAudioDevicePropertyNominalSampleRate)
+        AudioObjectAddPropertyListenerBlock(aggregateID, &rateAddress, .main, recheck)
+        var formatAddress = globalAddress(kAudioTapPropertyFormat)
+        AudioObjectAddPropertyListenerBlock(tapID, &formatAddress, .main, recheck)
     }
 
     // Runs on the real-time IO queue: downmix into a fresh buffer, then hand off.
@@ -259,16 +292,25 @@ func runCapture(rate: Double) -> Int32 {
     heartbeat.resume()
     // The aggregate device is built around the current default output. When that changes
     // (AirPods connect, a USB headset is unplugged) exit with 75 so the supervisor in
-    // Python restarts us on the new device.
+    // Python restarts us on the new device. Notifications also arrive when nothing really
+    // changed, so compare the device first: each restart loses a moment of audio.
+    let startUID = try? deviceUID(try defaultOutputDevice())
     for selector in [kAudioHardwarePropertyDefaultOutputDevice,
                      kAudioHardwarePropertyDefaultSystemOutputDevice] {
         var address = globalAddress(selector)
         AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address,
                                             .main) { _, _ in
+            let nowUID = try? deviceUID(try defaultOutputDevice())
+            if nowUID != nil && nowUID == startUID { return }
             emit(["event": "device_changed"])
             capture.stop()
             exit(75)
         }
+    }
+    capture.watchRate { rate in
+        emit(["event": "device_changed", "reason": "sample rate changed to \(Int(rate)) Hz"])
+        capture.stop()
+        exit(75)
     }
     signal(SIGINT, SIG_IGN)
     signal(SIGTERM, SIG_IGN)

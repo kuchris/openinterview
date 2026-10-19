@@ -277,6 +277,10 @@ class SystemAudioSource:
             event = msg.get("event")
             if event == "format":
                 self.helper_format = msg
+                log.info("system audio format: %s Hz (tap %s Hz, device %s Hz)",
+                         msg.get("sample_rate"), msg.get("tap_rate"), msg.get("device_rate"))
+            elif event == "device_changed" and msg.get("reason"):
+                log.warning("system audio: %s", msg["reason"])
             elif event == "started":
                 self.last_error = ""
                 self._started_event.set()
