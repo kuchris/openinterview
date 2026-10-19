@@ -5,7 +5,7 @@ cards as failed, while ASR keeps running.
 
 Flow (mode "practice"):
   1. A complete utterance from a listened-to speaker (default "Them") is detected as a
-     technical question -> a card is created and the answer is requested in the background.
+     interview question (technical or behavioural) -> a card is created and the answer is requested in the background.
   2. The UI shows "Your turn: answer out loud". Your mic utterances are attached to the
      card as your spoken answer.
   3. You click Reveal to see the short answer, 3-5 key points and an optional Python
@@ -52,7 +52,7 @@ class PracticeAssistant:
         self.enabled = False
         self.health = (False, "not checked")
         self.session_source = "mic"
-        self.detector = QuestionDetector(DetectorConfig(require_technical=cfg.require_technical))
+        self.detector = QuestionDetector(DetectorConfig(filter_small_talk=cfg.filter_small_talk))
         self.cards: OrderedDict[int, dict] = OrderedDict()
         self.context: deque[str] = deque(maxlen=12)
         self._ids = itertools.count(1)

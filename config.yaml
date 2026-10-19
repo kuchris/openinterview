@@ -46,5 +46,5 @@ assistant:
   mode: immediate           # immediate (answers show automatically) | practice (reveal by hand)
   listen_to: [auto]         # whose sentences may be questions: auto = "Them" when system audio
                             # is captured, "Me" in mic-only practice; or e.g. [system, mic]
-  require_technical: true   # ignore small talk like "How are you today?"
+  filter_small_talk: true   # answer technical + behavioural questions, ignore "How are you?"
   timeout_s: 60

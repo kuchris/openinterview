@@ -58,7 +58,7 @@ class AssistantConfig:
     api_key_env: str = "OPENAI_API_KEY"  # openai provider only; key read from this env var
     mode: str = "immediate"              # immediate | practice (hide until revealed)
     listen_to: list[str] = field(default_factory=lambda: ["auto"])  # auto | [system, mic]
-    require_technical: bool = True
+    filter_small_talk: bool = True    # only interview questions (technical/behavioural)
     timeout_s: float = 60.0
     max_cards: int = 50
 

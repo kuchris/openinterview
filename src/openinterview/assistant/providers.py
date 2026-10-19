@@ -35,18 +35,24 @@ from dataclasses import asdict, dataclass, field
 from typing import Protocol
 
 COACH_PROMPT = (
-    "You coach someone preparing for a live technical interview. Always reply with ONLY a "
-    "JSON object in the exact format requested: no prose, no markdown, no code fences. Be "
-    "accurate and concise; no filler or caveats. Questions come from speech recognition and "
-    "may be garbled: answer the most likely intended technical question."
+    "You coach someone preparing for a job interview, technical or behavioural. Always reply "
+    "with ONLY a JSON object in the exact format requested: no prose, no markdown, no code "
+    "fences. Be accurate and concise; no filler or caveats. Questions come from speech "
+    "recognition and may be garbled: answer the most likely intended question. If several "
+    "questions are asked at once, answer them together."
 )
 
 ANSWER_RULES = (
     'Format: {"short_answer": string, "key_points": [string], "python_example": string}. '
     "short_answer: what a strong candidate would say out loud, 1-2 sentences, at most 45 "
     "words, plain spoken English. key_points: 3 to 5 terse cues to remember, each at most 8 "
-    "words, not full sentences. python_example: only when code genuinely helps (algorithms, "
-    'data structures, language features), at most 10 runnable lines; otherwise "".'
+    "words, not full sentences. python_example: only for technical questions where code "
+    'genuinely helps (algorithms, data structures, language features), at most 10 runnable '
+    'lines; otherwise "". Behavioural questions (about the candidate, their background, '
+    "motivation, teamwork, strengths...): you do not know their history, so give a model "
+    "answer they can adapt, with short [placeholders] for their own details (e.g. [your "
+    "degree]), and key points that outline the structure (e.g. STAR: situation, task, "
+    "action, result); no code."
 )
 
 FEEDBACK_RULES = (

@@ -28,7 +28,21 @@ def test_detects_technical_questions(text):
 
 
 @pytest.mark.parametrize("text", [
+    "Let's start with tell me about yourself question. Who are you? What have you studied?",
+    "Okay, so why did you choose that particular major and at that particular school?",
+    "What is your greatest weakness?",
+    "Describe a time you had a conflict with a teammate.",
+    "Where do you see yourself in five years?",
+])
+def test_detects_behavioural_questions(text):
+    assert QuestionDetector().check(text)
+
+
+@pytest.mark.parametrize("text", [
     "How are you doing today?",                       # small talk
+    "Can you hear me okay?",                          # small talk
+    "What are you doing?",                            # not an interview question
+    "I'm going to lead with questions, but feel free to ask me about the role.",  # statement
     "Thanks, that makes sense.",                      # not a question
     "Why?",                                           # too short
     "I think we should use a hash map here.",         # statement
@@ -260,11 +274,11 @@ def test_question_from_them_becomes_answered_card_with_spoken_answer_and_feedbac
     prov = FakeProvider()
     a, msgs = make_assistant(prov)
     a.on_message(status("system"))
-    a.on_message(utterance("system", "Tell me about yourself."))      # context, not a question
+    a.on_message(utterance("system", "Thanks for joining us today."))   # context, not a question
     a.on_message(utterance("system", "How does Python's GIL affect threads?"))
     assert wait_for(lambda: a.cards and next(iter(a.cards.values()))["status"] == "ready")
     q, ctx = prov.questions[0]
-    assert q.startswith("How does") and ctx == ["Them: Tell me about yourself."]
+    assert q.startswith("How does") and ctx == ["Them: Thanks for joining us today."]
     a.on_message(utterance("mic", "Only one thread runs Python bytecode at a time."))
     card = next(iter(a.cards.values()))
     assert card["spoken"] == ["Only one thread runs Python bytecode at a time."]

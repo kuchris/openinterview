@@ -160,14 +160,20 @@ utterance / retract), `metrics`. Partials are coalesced to one per source per 10
 The assistant is disabled by default, and transcription never depends on it. When on, it
 turns the interviewer's complete questions into practice cards:
 
-1. A **complete utterance** becomes a card if it looks like a technical question. By
+1. A **complete utterance** becomes a card if it looks like an interview question, technical
+   or behavioural. By
    default (`listen_to: [auto]`), questions come from "Them" when system audio is captured.
    In **mic-only** mode they come from "Me", so you can practise by reading questions aloud
    and then answering. Utterances are merged finals; partials and fragments are never sent. A
    question needs:
    - a question form (`?`, "how would you…", "explain…", "walk me through…");
    - at least 4 words;
-   - a technical cue, so small talk is ignored.
+   - an interview cue: a technical term, or a behavioural one ("tell me about yourself",
+     "why did you choose…", "describe a time…", strengths, experience, team…). Small talk
+     ("How are you?", "Can you hear me?") is ignored (`assistant.filter_small_talk`).
+
+   Behavioural questions get a model answer with `[placeholders]` for your own details, and
+   key points that outline the structure (e.g. STAR). They get no code.
 
    Near-duplicates (≥ 85% similar to a recent question) are skipped. At most one request is
    in flight; the small backlog drops its oldest entry.
@@ -409,7 +415,7 @@ Covers:
   end-to-end dual-source runs with and without suppression.
 - **Dashboard:** the HTTP API, WebSocket snapshot/stream/stop/export, conflict and
   validation errors, late-joining clients, and partial coalescing.
-- **Assistant:** question detection (technical questions vs small talk, statements, short
+- **Assistant:** question detection (technical and behavioural questions vs small talk, statements, short
   fragments, near-duplicates); the OpenCode request shape against a mock server
   (deny-all permissions, plan agent, json_schema, model id, a reused session, text-JSON
   fallback, an expired-key error); the OpenAI-compatible provider with history; the
