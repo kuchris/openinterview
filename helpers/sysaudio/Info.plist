@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>local.openinterview.sysaudio</string>
+	<key>CFBundleName</key>
+	<string>sysaudio</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Transcribes system audio (e.g. the other side of a call) locally for OpenInterview.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Transcribes your microphone locally for OpenInterview.</string>
+</dict>
+</plist>

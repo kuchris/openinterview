@@ -1,0 +1,21 @@
+# Runtime configuration. CLI flags override these values.
+
+audio:
+  source: mic              # mic | system | both
+  mic_device: null         # null = system default; or an index / name substring (see `openinterview devices`)
+  sample_rate: 16000       # ASR rate; capture is resampled to this
+  ring_buffer_seconds: 30  # per-source history kept in memory (bounded)
+
+asr:
+  model: base.en           # tiny.en | base.en | small.en | large-v3-turbo
+  language: en
+
+pipeline:
+  # Phase 1 uses fixed chunks. Phase 2 replaces this with VAD segmentation.
+  chunk_seconds: 4.0
+  silence_rms: 0.004       # chunks quieter than this are skipped (prevents silence hallucinations)
+  queue_size: 4            # bounded inference queue; when full the OLDEST job is dropped
+
+storage:
+  save_transcripts: false  # audio is never written to disk
+  transcript_dir: transcripts
