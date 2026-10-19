@@ -221,7 +221,13 @@ def _options(cfg: Config) -> dict:
 def serve(cfg: Config, host: str = "127.0.0.1", port: int = 8765) -> None:
     import uvicorn
 
+    import socket
+
     if host not in ("127.0.0.1", "localhost", "::1"):
         raise SystemExit("the dashboard only binds to localhost")
+    with socket.socket() as probe:
+        if probe.connect_ex((host, port)) == 0:
+            raise SystemExit(f"A dashboard is already running at http://{host}:{port} "
+                             "(open it in the browser, or stop it first).")
     print(f"OpenInterview dashboard: http://{host}:{port}")
     uvicorn.run(create_app(cfg), host=host, port=port, log_level="warning")
