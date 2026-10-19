@@ -4,12 +4,16 @@ OpenCodeProvider talks to a locally running `opencode serve` through its documen
 API (verified against OpenCode 1.19.3's OpenAPI spec at /doc):
 
   POST /session?directory=D            {"title", "permission": [...]}       -> Session
-  POST /session/{id}/message?directory {"agent", "system", "format", "parts"} -> {info, parts}
+  POST /session/{id}/message?directory {"agent", "system", "model", "parts"}  -> {info, parts}
 
-Safety: the session is created with every tool permission denied and uses the read-only
-"plan" agent, in an empty working directory, so the model can only answer, never read or
-change files or run commands. One OpenCode session is kept per practice run, so follow-up
-questions keep their context.
+Agent: the provider works in its own empty directory and writes an `opencode.json` there
+defining a dedicated "interview-coach" agent: a short prompt, all tools off, low
+temperature. OpenCode's built-in agents carry ~6.5k tokens of coding-agent instructions,
+which made answers slow and verbose; the coach agent sends ~300 tokens per question.
+
+Safety: tools are disabled on the agent, the session denies every tool permission, and the
+working directory is empty, so the model can only answer, never read or change files or run
+commands. One OpenCode session is kept per practice run, so follow-ups keep context.
 
 Output: the model is asked for a JSON object in its text reply, which is parsed (with one
 retry). OpenCode's own structured output (format=json_schema) is *not* used: OpenCode
@@ -30,11 +34,26 @@ import urllib.request
 from dataclasses import asdict, dataclass, field
 from typing import Protocol
 
-SYSTEM_PROMPT = (
-    "You are a concise technical interview coach helping someone practise. For each "
-    "question, give a short spoken-style answer in English (2-4 sentences), 3 to 5 key "
-    "technical points a strong answer must cover, and a short Python example only when code "
-    "genuinely helps (otherwise an empty string). Be accurate; do not pad."
+COACH_PROMPT = (
+    "You coach someone preparing for a live technical interview. Always reply with ONLY a "
+    "JSON object in the exact format requested: no prose, no markdown, no code fences. Be "
+    "accurate and concise; no filler or caveats. Questions come from speech recognition and "
+    "may be garbled: answer the most likely intended technical question."
+)
+
+ANSWER_RULES = (
+    'Format: {"short_answer": string, "key_points": [string], "python_example": string}. '
+    "short_answer: what a strong candidate would say out loud, 1-2 sentences, at most 45 "
+    "words, plain spoken English. key_points: 3 to 5 terse cues to remember, each at most 8 "
+    "words, not full sentences. python_example: only when code genuinely helps (algorithms, "
+    'data structures, language features), at most 10 runnable lines; otherwise "".'
+)
+
+FEEDBACK_RULES = (
+    'Format: {"covered": [string], "missed": [string], "tip": string}. Compare the '
+    "candidate's spoken answer with the key points. covered / missed: key points as terse "
+    "phrases of at most 8 words; be fair to paraphrases and speech-recognition errors. tip: "
+    "one concrete sentence, at most 25 words, on what to add or say better."
 )
 
 ANSWER_SCHEMA = {
@@ -109,9 +128,8 @@ def _grade_prompt(question: str, answer: Answer, spoken: str) -> str:
             f"which did they miss? Give one short, specific tip.")
 
 
-def _json_instruction(schema: dict) -> str:
-    return ("Reply with only a JSON object (no prose, no code fences) matching this JSON "
-            f"schema: {json.dumps(schema)}")
+def _rules(schema: dict) -> str:
+    return FEEDBACK_RULES if "covered" in schema["properties"] else ANSWER_RULES
 
 
 def _parse_json_text(text: str) -> dict:
@@ -161,14 +179,28 @@ class _HTTP:
 class OpenCodeProvider:
     name = "opencode"
 
+    AGENT = "interview-coach"
+
     def __init__(self, base_url: str = "http://127.0.0.1:4096", model: str | None = None,
-                 agent: str = "plan", timeout: float = 60.0, directory: str | None = None) -> None:
+                 timeout: float = 60.0, directory: str | None = None) -> None:
         self.http = _HTTP(base_url, timeout)
         self.model = model  # "providerID/modelID"; None = OpenCode's configured default
-        self.agent = agent
-        # An empty scratch directory: OpenCode treats it as the project root.
+        # An empty scratch directory: OpenCode treats it as the project root, and loads the
+        # coach agent from its opencode.json.
         self.directory = directory or tempfile.mkdtemp(prefix="openinterview-opencode-")
+        self._write_agent_config()
         self.session_id: str | None = None
+
+    def _write_agent_config(self) -> None:
+        import os
+
+        config = {"$schema": "https://opencode.ai/config.json", "agent": {self.AGENT: {
+            "description": "Concise technical interview coach (OpenInterview)",
+            "mode": "primary", "prompt": COACH_PROMPT, "temperature": 0.3,
+            "tools": {"*": False},
+        }}}
+        with open(os.path.join(self.directory, "opencode.json"), "w") as f:
+            json.dump(config, f, indent=2)
 
     def _q(self) -> dict:
         return {"directory": self.directory}
@@ -190,8 +222,7 @@ class OpenCodeProvider:
         return self.session_id
 
     def _send(self, text: str, schema: dict) -> tuple[dict, str]:
-        body: dict = {"agent": self.agent,
-                      "system": SYSTEM_PROMPT + " " + _json_instruction(schema),
+        body: dict = {"agent": self.AGENT, "system": _rules(schema),
                       "parts": [{"type": "text", "text": text}]}
         if self.model and "/" in self.model:
             provider, model = self.model.split("/", 1)
@@ -256,7 +287,7 @@ class OpenAICompatibleProvider:
             return False, str(exc)
 
     def _chat(self, text: str, schema: dict) -> dict:
-        messages = [{"role": "system", "content": SYSTEM_PROMPT + " " + _json_instruction(schema)},
+        messages = [{"role": "system", "content": COACH_PROMPT + " " + _rules(schema)},
                     *self.history[-8:], {"role": "user", "content": text}]
         r = self.http.request("POST", "/chat/completions", {
             "model": self.model, "messages": messages, "temperature": 0.2,

@@ -167,17 +167,26 @@ How it talks to OpenCode: the documented server API, verified against OpenCode 1
 
 - `POST /session?directory=<empty temp dir>` creates the session, with
   `permission: [{"permission": "*", "pattern": "*", "action": "deny"}]`.
-- `POST /session/{id}/message` sends each question, with `agent: "plan"` and a coaching
-  `system` prompt that asks for a JSON object matching the answer schema. The reply's text
-  is parsed as JSON, with one retry if it isn't valid JSON.
+- **A dedicated `interview-coach` agent.** The provider writes it into `opencode.json` in
+  its own empty working directory: a short coaching prompt, all tools off, temperature 0.3.
+  OpenCode's built-in `plan` agent carried about 6.5k tokens of coding-agent instructions,
+  which made answers slow and verbose. The coach agent sends about 300 tokens per question.
+- `POST /session/{id}/message` sends each question, with `agent: "interview-coach"` and the
+  answer rules in `system`:
+  - a short answer of 1–2 sentences, at most 45 words;
+  - 3–5 key-point cues of at most 8 words each;
+  - a Python example of at most 10 lines, only when it helps.
+
+  The reply's text is parsed as JSON, with one retry if it isn't valid JSON.
 - OpenCode's own `format: json_schema` is **not** used. OpenCode implements it as a hidden
   `StructuredOutput` tool, which the deny-all permission blocks. DeepSeek V4.1 Flash then
   fails with "Model did not produce structured output".
-- **Safety:** every tool permission is denied, the agent is read-only, and the working
-  directory is empty. The model can answer, but cannot read or change files or run commands.
+- **Safety:** tools are disabled on the agent, every tool permission is denied on the
+  session, and the working directory is empty. The model can answer, but cannot read or change files or run commands.
 - **Model:** `assistant.model` picks one as `"providerID/modelID"` (list them with
   `opencode models`). `null` uses OpenCode's default. Tested with
-  `opencode-go/deepseek-v4.1-flash`: about 3 s per answer, plus feedback on a spoken answer.
+  `opencode-go/deepseek-v4.1-flash`: 2–4 s per answer. `opencode-go/deepseek-v4-pro` gave
+  similar answers but took 12–25 s.
 - **Errors** (server down, expired key, timeout) show on the card; transcription keeps
   running. Verified live: with an expired OpenCode Go key, the card showed OpenCode's
   "This API key has expired…" message.

@@ -136,9 +136,11 @@ def test_opencode_request_shape_and_structured_answer(mock_opencode, tmp_path):
     assert create["permission"] == [{"permission": "*", "pattern": "*", "action": "deny"}]
     _, path, msg = mock_opencode.requests[2]
     assert path.startswith("/session/ses_test123/message")
-    assert msg["agent"] == "plan"
+    assert msg["agent"] == "interview-coach"
     # No OpenCode structured output: it is a tool, hidden by the deny-all permission.
-    assert "format" not in msg and "JSON schema" in msg["system"]
+    assert "format" not in msg and '"short_answer"' in msg["system"]
+    agent_cfg = json.loads((tmp_path / "opencode.json").read_text())["agent"]["interview-coach"]
+    assert agent_cfg["tools"] == {"*": False} and agent_cfg["mode"] == "primary"
     assert msg["model"] == {"providerID": "opencode-go", "modelID": "test-model"}
     assert "Them: hi" in msg["parts"][0]["text"]
 
