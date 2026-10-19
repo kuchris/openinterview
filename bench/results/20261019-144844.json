@@ -1,0 +1,47 @@
+{
+  "meta": {
+    "date": "20261019-144844",
+    "chip": "Apple M2",
+    "macos": "26.6.2",
+    "python": "3.12.11",
+    "speed": 1.0
+  },
+  "results": [
+    {
+      "model": "apple",
+      "prompt": true,
+      "speed": 1.0,
+      "model_load_s": 0.15,
+      "audio_s": 207.6,
+      "wer_librispeech": 0.0132,
+      "wer_technical": 0.1111,
+      "wer_all": 0.0485,
+      "pipeline": {
+        "lost_samples": 0,
+        "segments": 25,
+        "forced_cuts": 0,
+        "filtered": 0,
+        "duplicates": 0,
+        "partials": 743,
+        "finals": 25,
+        "pending_jobs": 0,
+        "finals_dropped": 0,
+        "partials_superseded": 0,
+        "partials_skipped": 0,
+        "degraded": false,
+        "final_latency_ms": {
+          "n": 25,
+          "mean": 1051.6,
+          "p50": 1032.5,
+          "p95": 1304.2,
+          "max": 2027.3
+        },
+        "helper_rss_mb": 124.0
+      },
+      "memory": {
+        "rss_peak_mb": 254.3,
+        "mlx_peak_mb": 11.5
+      }
+    }
+  ]
+}

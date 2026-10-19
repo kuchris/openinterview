@@ -29,10 +29,12 @@ else
   echo "      xcode-select --install"
 fi
 
-echo "Downloading default model (base.en)..."
+echo "Downloading default model (small.en) and Silero VAD..."
 uv run python -c "
+from openinterview.asr.vad import model_path
 from openinterview.asr.whisper_engine import WhisperEngine
-WhisperEngine('base.en').load()
-print('model ready')"
+model_path()
+WhisperEngine('small.en').load()
+print('models ready')"
 
 uv run openinterview check || true

@@ -5,7 +5,7 @@
 //   sysaudio capture [--rate 16000]   stream frames until stdin closes or SIGINT/SIGTERM
 //   sysaudio permissions              print microphone authorization status as JSON
 //
-// Frame format on stdout (little endian):
+// Frame format on stdout (little endian, see helpers/common/common.swift):
 //   uint32 magic 'SAU1' | uint32 sampleCount | uint64 endTimeNanos (CLOCK_UPTIME_RAW,
 //   same clock as Python's time.monotonic on macOS) | float32 samples[sampleCount]
 // Diagnostics go to stderr as one JSON object per line.
@@ -204,7 +204,7 @@ final class SystemAudioCapture {
         let count = Int(output.frameLength)
         guard count > 0 else { return }
         var header = Data(capacity: 16)
-        withUnsafeBytes(of: UInt32(0x3155_4153).littleEndian) { header.append(contentsOf: $0) }
+        withUnsafeBytes(of: frameMagicAudio.littleEndian) { header.append(contentsOf: $0) }
         withUnsafeBytes(of: UInt32(count).littleEndian) { header.append(contentsOf: $0) }
         withUnsafeBytes(of: endNanos.littleEndian) { header.append(contentsOf: $0) }
         let payload = Data(bytes: output.floatChannelData![0], count: count * MemoryLayout<Float>.size)
@@ -263,37 +263,11 @@ func runCapture(rate: Double) -> Int32 {
     dispatchMain()
 }
 
-// MARK: - TCC responsibility
-
-// macOS attributes privacy permissions to the "responsible" process: normally the app that
-// launched us (Terminal, an IDE, ...), which may have no audio-capture usage string and then
-// gets silently denied. Re-exec'ing ourselves with responsibility disclaimed makes TCC treat
-// this binary as its own client, so it prompts using the usage strings in our embedded
-// Info.plist and the grant does not depend on which app launched us. This is the same
-// (private, long-standing) libquarantine call that terminals and IDEs use for child processes.
-@_silgen_name("responsibility_spawnattrs_setdisclaim")
-func responsibility_spawnattrs_setdisclaim(_ attrs: UnsafeMutablePointer<posix_spawnattr_t?>,
-                                           _ disclaim: Int32) -> Int32
-
-func reexecAsResponsibleProcess() {
-    let marker = "SYSAUDIO_RESPONSIBLE"
-    guard getenv(marker) == nil else { return }
-    setenv(marker, "1", 1)
-    var attr: posix_spawnattr_t?
-    posix_spawnattr_init(&attr)
-    posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETEXEC))  // replace this process image
-    _ = responsibility_spawnattrs_setdisclaim(&attr, 1)
-    let path = Bundle.main.executablePath ?? CommandLine.arguments[0]
-    var argv: [UnsafeMutablePointer<CChar>?] = CommandLine.arguments.map { strdup($0) } + [nil]
-    var pid: pid_t = 0
-    let rc = posix_spawn(&pid, path, nil, &attr, &argv, environ)
-    // Only reached if the exec failed; carry on as a normal child of the launcher.
-    emit(["event": "warning", "message": "could not disclaim responsibility (errno \(rc))"])
-}
-
 let args = CommandLine.arguments
 let command = args.count > 1 ? args[1] : "capture"
-if !args.contains("--inherit-permissions") { reexecAsResponsibleProcess() }
+if !args.contains("--inherit-permissions"), let rc = reexecAsResponsibleProcess(marker: "SYSAUDIO_RESPONSIBLE") {
+    emit(["event": "warning", "message": "could not disclaim responsibility (errno \(rc))"])
+}
 switch command {
 case "permissions":
     print("{\"microphone\": \"\(microphoneStatus())\", \"system_audio\": \"unknown_until_capture\"}")

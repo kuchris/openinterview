@@ -11,6 +11,7 @@ dependencies = [
     "soxr>=0.5",
     "pyyaml>=6.0",
     "psutil>=6.0",
+    "onnxruntime>=1.20",
 ]
 
 [project.optional-dependencies]

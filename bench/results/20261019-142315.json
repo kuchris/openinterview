@@ -1,0 +1,351 @@
+{
+  "meta": {
+    "date": "20261019-142315",
+    "chip": "Apple M2",
+    "macos": "26.6.2",
+    "python": "3.12.11",
+    "speed": 1.0
+  },
+  "results": [
+    {
+      "model": "tiny.en",
+      "prompt": true,
+      "speed": 1.0,
+      "model_load_s": 0.81,
+      "audio_s": 207.6,
+      "wer_librispeech": 0.1056,
+      "wer_technical": 0.0409,
+      "wer_all": 0.0823,
+      "pipeline": {
+        "lost_samples": 0,
+        "segments": 30,
+        "forced_cuts": 1,
+        "filtered": 1,
+        "duplicates": 0,
+        "partials": 179,
+        "finals": 29,
+        "pending_jobs": 0,
+        "finals_dropped": 0,
+        "partials_superseded": 0,
+        "partials_skipped": 0,
+        "degraded": false,
+        "vad_frame_us": {
+          "n": 6535,
+          "mean": 773.0,
+          "p50": 772.0,
+          "p95": 1211.0,
+          "max": 3031.0
+        },
+        "queue_wait_ms": {
+          "n": 212,
+          "mean": 0.6,
+          "p50": 0.4,
+          "p95": 0.5,
+          "max": 39.1
+        },
+        "inference_partial_ms": {
+          "n": 182,
+          "mean": 101.0,
+          "p50": 93.8,
+          "p95": 145.8,
+          "max": 589.8
+        },
+        "inference_final_ms": {
+          "n": 30,
+          "mean": 103.6,
+          "p50": 102.9,
+          "p95": 137.8,
+          "max": 165.9
+        },
+        "first_partial_ms": {
+          "n": 29,
+          "mean": 584.5,
+          "p50": 583.9,
+          "p95": 596.0,
+          "max": 599.2
+        },
+        "segmentation_ms": {
+          "n": 30,
+          "mean": 616.5,
+          "p50": 609.1,
+          "p95": 609.8,
+          "max": 928.8
+        },
+        "final_latency_ms": {
+          "n": 28,
+          "mean": 714.9,
+          "p50": 715.8,
+          "p95": 744.6,
+          "max": 753.0
+        },
+        "rtf": {
+          "n": 212,
+          "mean": 0.04,
+          "p50": 0.026,
+          "p95": 0.107,
+          "max": 0.538
+        }
+      },
+      "memory": {
+        "rss_peak_mb": 490.2,
+        "mlx_peak_mb": 320.6
+      }
+    },
+    {
+      "model": "base.en",
+      "prompt": true,
+      "speed": 1.0,
+      "model_load_s": 0.64,
+      "audio_s": 207.6,
+      "wer_librispeech": 0.0759,
+      "wer_technical": 0.0409,
+      "wer_all": 0.0633,
+      "pipeline": {
+        "lost_samples": 0,
+        "segments": 30,
+        "forced_cuts": 1,
+        "filtered": 1,
+        "duplicates": 0,
+        "partials": 180,
+        "finals": 29,
+        "pending_jobs": 0,
+        "finals_dropped": 0,
+        "partials_superseded": 0,
+        "partials_skipped": 0,
+        "degraded": false,
+        "vad_frame_us": {
+          "n": 6535,
+          "mean": 697.0,
+          "p50": 720.0,
+          "p95": 1120.0,
+          "max": 5471.0
+        },
+        "queue_wait_ms": {
+          "n": 212,
+          "mean": 5.1,
+          "p50": 0.4,
+          "p95": 0.6,
+          "max": 334.7
+        },
+        "inference_partial_ms": {
+          "n": 182,
+          "mean": 139.9,
+          "p50": 131.9,
+          "p95": 182.6,
+          "max": 700.9
+        },
+        "inference_final_ms": {
+          "n": 30,
+          "mean": 160.0,
+          "p50": 138.4,
+          "p95": 208.0,
+          "max": 670.6
+        },
+        "first_partial_ms": {
+          "n": 29,
+          "mean": 625.3,
+          "p50": 616.3,
+          "p95": 626.3,
+          "max": 934.9
+        },
+        "segmentation_ms": {
+          "n": 30,
+          "mean": 616.5,
+          "p50": 609.1,
+          "p95": 609.7,
+          "max": 928.3
+        },
+        "final_latency_ms": {
+          "n": 28,
+          "mean": 759.6,
+          "p50": 754.4,
+          "p95": 795.2,
+          "max": 842.4
+        },
+        "rtf": {
+          "n": 212,
+          "mean": 0.09,
+          "p50": 0.035,
+          "p95": 0.147,
+          "max": 6.706
+        }
+      },
+      "memory": {
+        "rss_peak_mb": 613.4,
+        "mlx_peak_mb": 576.0
+      }
+    },
+    {
+      "model": "small.en",
+      "prompt": true,
+      "speed": 1.0,
+      "model_load_s": 1.27,
+      "audio_s": 207.6,
+      "wer_librispeech": 0.0462,
+      "wer_technical": 0.0175,
+      "wer_all": 0.0359,
+      "pipeline": {
+        "lost_samples": 0,
+        "segments": 30,
+        "forced_cuts": 1,
+        "filtered": 1,
+        "duplicates": 0,
+        "partials": 178,
+        "finals": 29,
+        "pending_jobs": 0,
+        "finals_dropped": 0,
+        "partials_superseded": 0,
+        "partials_skipped": 0,
+        "degraded": false,
+        "vad_frame_us": {
+          "n": 6535,
+          "mean": 682.0,
+          "p50": 719.0,
+          "p95": 1165.0,
+          "max": 3189.0
+        },
+        "queue_wait_ms": {
+          "n": 211,
+          "mean": 20.3,
+          "p50": 0.4,
+          "p95": 165.7,
+          "max": 608.1
+        },
+        "inference_partial_ms": {
+          "n": 181,
+          "mean": 335.1,
+          "p50": 306.1,
+          "p95": 440.0,
+          "max": 1631.4
+        },
+        "inference_final_ms": {
+          "n": 30,
+          "mean": 343.0,
+          "p50": 324.2,
+          "p95": 426.9,
+          "max": 710.8
+        },
+        "first_partial_ms": {
+          "n": 29,
+          "mean": 762.6,
+          "p50": 758.6,
+          "p95": 790.9,
+          "max": 863.7
+        },
+        "segmentation_ms": {
+          "n": 30,
+          "mean": 616.5,
+          "p50": 608.9,
+          "p95": 610.1,
+          "max": 928.4
+        },
+        "final_latency_ms": {
+          "n": 28,
+          "mean": 1015.5,
+          "p50": 971.4,
+          "p95": 1240.8,
+          "max": 1284.0
+        },
+        "rtf": {
+          "n": 211,
+          "mean": 0.138,
+          "p50": 0.081,
+          "p95": 0.349,
+          "max": 2.577
+        }
+      },
+      "memory": {
+        "rss_peak_mb": 1022.2,
+        "mlx_peak_mb": 1171.9
+      }
+    },
+    {
+      "model": "large-v3-turbo",
+      "prompt": true,
+      "speed": 1.0,
+      "model_load_s": 2.36,
+      "audio_s": 207.6,
+      "wer_librispeech": 0.0693,
+      "wer_technical": 0.0351,
+      "wer_all": 0.057,
+      "pipeline": {
+        "lost_samples": 0,
+        "segments": 30,
+        "forced_cuts": 1,
+        "filtered": 0,
+        "duplicates": 0,
+        "partials": 150,
+        "finals": 30,
+        "pending_jobs": 0,
+        "finals_dropped": 0,
+        "partials_superseded": 19,
+        "partials_skipped": 0,
+        "degraded": false,
+        "vad_frame_us": {
+          "n": 6535,
+          "mean": 630.0,
+          "p50": 611.0,
+          "p95": 1010.0,
+          "max": 9208.0
+        },
+        "queue_wait_ms": {
+          "n": 180,
+          "mean": 298.2,
+          "p50": 135.1,
+          "p95": 951.9,
+          "max": 1315.6
+        },
+        "inference_partial_ms": {
+          "n": 150,
+          "mean": 1091.1,
+          "p50": 1004.8,
+          "p95": 1437.4,
+          "max": 1508.1
+        },
+        "inference_final_ms": {
+          "n": 30,
+          "mean": 1209.4,
+          "p50": 1102.5,
+          "p95": 1494.3,
+          "max": 1547.9
+        },
+        "first_partial_ms": {
+          "n": 29,
+          "mean": 2342.3,
+          "p50": 2389.7,
+          "p95": 3547.0,
+          "max": 3664.3
+        },
+        "segmentation_ms": {
+          "n": 30,
+          "mean": 616.4,
+          "p50": 609.0,
+          "p95": 609.5,
+          "max": 929.0
+        },
+        "final_latency_ms": {
+          "n": 29,
+          "mean": 2433.0,
+          "p50": 2409.1,
+          "p95": 3262.9,
+          "max": 3282.7
+        },
+        "rtf": {
+          "n": 180,
+          "mean": 0.489,
+          "p50": 0.266,
+          "p95": 1.335,
+          "max": 11.696
+        }
+      },
+      "memory": {
+        "rss_peak_mb": 1903.7,
+        "mlx_peak_mb": 2040.7
+      }
+    },
+    {
+      "model": "parakeet-v2",
+      "error": "[matmul] Last dimension of first input with shape (128,257) must match second to last dimension of second input with shape (514,101)."
+    }
+  ]
+}

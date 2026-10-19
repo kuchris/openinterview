@@ -22,15 +22,22 @@ class AudioConfig:
 
 @dataclass
 class ASRConfig:
-    model: str = "base.en"
+    model: str = "small.en"
     language: str = "en"
+    vocabulary_prompt: str = ""
+    prompt_with_context: bool = True
 
 
 @dataclass
 class PipelineConfig:
-    chunk_seconds: float = 4.0
-    silence_rms: float = 0.004
-    queue_size: int = 4
+    vad: str = "silero"            # silero | energy
+    vad_threshold: float = 0.5
+    min_silence_s: float = 0.6
+    max_segment_s: float = 15.0
+    partial_interval_s: float = 1.0
+    max_finals: int = 8
+    degrade_at: int = 2
+    merge_gap_s: float = 1.2
 
 
 @dataclass

@@ -5,5 +5,5 @@ __pycache__/
 transcripts/
 helpers/sysaudio/.build/
 bin/
-bench/results/
+bench/data/
 *.wav

@@ -1,0 +1,179 @@
+{
+  "meta": {
+    "date": "20261019-143022",
+    "chip": "Apple M2",
+    "macos": "26.6.2",
+    "python": "3.12.11",
+    "speed": 1.0
+  },
+  "results": [
+    {
+      "model": "base.en",
+      "prompt": false,
+      "speed": 1.0,
+      "model_load_s": 0.61,
+      "audio_s": 207.6,
+      "wer_librispeech": 0.0858,
+      "wer_technical": 0.0351,
+      "wer_all": 0.0675,
+      "pipeline": {
+        "lost_samples": 0,
+        "segments": 30,
+        "forced_cuts": 1,
+        "filtered": 1,
+        "duplicates": 0,
+        "partials": 181,
+        "finals": 29,
+        "pending_jobs": 0,
+        "finals_dropped": 0,
+        "partials_superseded": 0,
+        "partials_skipped": 0,
+        "degraded": false,
+        "vad_frame_us": {
+          "n": 6535,
+          "mean": 732.0,
+          "p50": 756.0,
+          "p95": 1145.0,
+          "max": 2001.0
+        },
+        "queue_wait_ms": {
+          "n": 212,
+          "mean": 1.7,
+          "p50": 0.4,
+          "p95": 0.5,
+          "max": 82.6
+        },
+        "inference_partial_ms": {
+          "n": 182,
+          "mean": 132.0,
+          "p50": 127.7,
+          "p95": 190.3,
+          "max": 273.3
+        },
+        "inference_final_ms": {
+          "n": 30,
+          "mean": 138.2,
+          "p50": 134.7,
+          "p95": 202.6,
+          "max": 227.6
+        },
+        "first_partial_ms": {
+          "n": 29,
+          "mean": 613.5,
+          "p50": 614.9,
+          "p95": 625.5,
+          "max": 634.0
+        },
+        "segmentation_ms": {
+          "n": 30,
+          "mean": 616.4,
+          "p50": 608.7,
+          "p95": 609.7,
+          "max": 928.9
+        },
+        "final_latency_ms": {
+          "n": 28,
+          "mean": 755.3,
+          "p50": 752.8,
+          "p95": 814.2,
+          "max": 829.3
+        },
+        "rtf": {
+          "n": 212,
+          "mean": 0.053,
+          "p50": 0.034,
+          "p95": 0.144,
+          "max": 0.81
+        }
+      },
+      "memory": {
+        "rss_peak_mb": 593.7,
+        "mlx_peak_mb": 526.4
+      }
+    },
+    {
+      "model": "small.en",
+      "prompt": false,
+      "speed": 1.0,
+      "model_load_s": 1.29,
+      "audio_s": 207.6,
+      "wer_librispeech": 0.0429,
+      "wer_technical": 0.0351,
+      "wer_all": 0.0401,
+      "pipeline": {
+        "lost_samples": 0,
+        "segments": 30,
+        "forced_cuts": 1,
+        "filtered": 1,
+        "duplicates": 0,
+        "partials": 181,
+        "finals": 29,
+        "pending_jobs": 0,
+        "finals_dropped": 0,
+        "partials_superseded": 0,
+        "partials_skipped": 0,
+        "degraded": false,
+        "vad_frame_us": {
+          "n": 6535,
+          "mean": 659.0,
+          "p50": 665.0,
+          "p95": 1118.0,
+          "max": 8527.0
+        },
+        "queue_wait_ms": {
+          "n": 212,
+          "mean": 11.6,
+          "p50": 0.4,
+          "p95": 83.6,
+          "max": 290.3
+        },
+        "inference_partial_ms": {
+          "n": 182,
+          "mean": 301.0,
+          "p50": 292.0,
+          "p95": 408.9,
+          "max": 650.8
+        },
+        "inference_final_ms": {
+          "n": 30,
+          "mean": 322.3,
+          "p50": 312.8,
+          "p95": 409.4,
+          "max": 481.7
+        },
+        "first_partial_ms": {
+          "n": 29,
+          "mean": 745.8,
+          "p50": 747.1,
+          "p95": 762.2,
+          "max": 764.1
+        },
+        "segmentation_ms": {
+          "n": 30,
+          "mean": 616.4,
+          "p50": 608.8,
+          "p95": 609.7,
+          "max": 928.4
+        },
+        "final_latency_ms": {
+          "n": 28,
+          "mean": 998.1,
+          "p50": 961.2,
+          "p95": 1213.8,
+          "max": 1244.7
+        },
+        "rtf": {
+          "n": 212,
+          "mean": 0.124,
+          "p50": 0.077,
+          "p95": 0.334,
+          "max": 1.96
+        }
+      },
+      "memory": {
+        "rss_peak_mb": 984.8,
+        "mlx_peak_mb": 1171.9
+      }
+    }
+  ]
+}

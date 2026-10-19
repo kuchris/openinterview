@@ -310,3 +310,18 @@ and what could not be tested in this environment.
   BlackHole.
 - Benchmark numbers are specific to the machine they are measured on and are reported with
   the chip model.
+
+## Changes made during implementation
+
+- **Phase 1**
+  - `sysaudio` re-execs itself with TCC responsibility disclaimed, so the system-audio
+    permission belongs to the helper rather than whichever app launched it. Launchers like
+    the Claude desktop app hand responsibility to an inner bundle, which was silently
+    denied.
+- **Phase 2**
+  - Added the Apple SpeechAnalyzer backend (`bin/appleasr`, macOS 26). It is genuinely
+    streaming and runs out of process.
+  - Default model changed from `base.en` to `small.en`, based on the measured benchmark
+    (README "Benchmarks").
+  - Added a "partial lag" metric for the Whisper and Parakeet pipelines. The Apple backend
+    cannot report it, because its volatile results have no per-word timing.

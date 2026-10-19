@@ -7,14 +7,26 @@ audio:
   ring_buffer_seconds: 30  # per-source history kept in memory (bounded)
 
 asr:
-  model: base.en           # tiny.en | base.en | small.en | large-v3-turbo
+  # Default chosen from bench/results (Apple M2): best technical-term accuracy at ~1 s finals.
+  # base.en: ~half the memory, ~0.2 s faster finals, ~2x the errors. apple: tiny memory
+  # footprint, runs on the Neural Engine, but weak on jargon. See README "Benchmarks".
+  model: small.en          # tiny.en | base.en | small.en | large-v3-turbo | parakeet-v2 | parakeet-v3 | apple
   language: en
+  # Domain terms that bias Whisper decoding toward the right spelling (Whisper only).
+  vocabulary_prompt: "Python, GIL, asyncio, Kubernetes, PostgreSQL, Redis, REST API, gRPC, idempotent, O(n log n)."
+  prompt_with_context: true  # also prompt with the tail of the previous sentence
 
 pipeline:
-  # Phase 1 uses fixed chunks. Phase 2 replaces this with VAD segmentation.
-  chunk_seconds: 4.0
-  silence_rms: 0.004       # chunks quieter than this are skipped (prevents silence hallucinations)
-  queue_size: 4            # bounded inference queue; when full the OLDEST job is dropped
+  vad: silero              # silero (ONNX) | energy (RMS fallback)
+  vad_threshold: 0.5
+  min_silence_s: 0.6       # silence that ends a segment -> final transcript
+  max_segment_s: 15.0      # hard cap; long speech is cut at the quietest frame
+  partial_interval_s: 1.0  # re-transcribe the open segment this often for live partials
+  # Overload policy: finals are FIFO and only dropped (oldest first) beyond max_finals.
+  # While degrade_at finals are pending, partials are skipped so finals catch up.
+  max_finals: 8
+  degrade_at: 2
+  merge_gap_s: 1.2         # finals without end punctuation merge into one utterance within this gap
 
 storage:
   save_transcripts: false  # audio is never written to disk

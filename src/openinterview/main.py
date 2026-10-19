@@ -14,6 +14,7 @@ import logging
 import platform
 import shutil
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -49,7 +50,7 @@ def _probe_mic(seconds: float = 0.6) -> str:
 
 
 def cmd_check(args: argparse.Namespace, cfg: Config) -> int:
-    from .asr.whisper_engine import MODEL_REPOS
+    from .asr.factory import MODELS as MODEL_REPOS
     from .audio.system_audio import HELPER_PATH, helper_available, helper_permissions
 
     mac_ver = platform.mac_ver()[0]
@@ -78,7 +79,28 @@ def cmd_check(args: argparse.Namespace, cfg: Config) -> int:
     except Exception as exc:
         problems.append(f"mlx import failed: {exc}")
 
-    report["models_cached"] = {name: _model_cached(repo) for name, repo in MODEL_REPOS.items()}
+    report["models_cached"] = {name: _model_cached(repo) for name, repo in MODEL_REPOS.items()
+                               if "/" in repo}
+    from .asr.apple_stream import HELPER_PATH as APPLE_HELPER
+
+    if APPLE_HELPER.is_file():
+        try:
+            out = subprocess.run([str(APPLE_HELPER), "status"], capture_output=True, text=True,
+                                 timeout=30).stdout
+            report["apple_speech"] = json.loads(out.strip().splitlines()[-1])
+        except Exception as exc:
+            report["apple_speech"] = f"status failed: {exc}"
+    else:
+        report["apple_speech"] = "helper not built (macOS 26+)"
+    try:
+        import onnxruntime
+
+        from .asr.vad import CACHE_DIR
+
+        report["onnxruntime"] = onnxruntime.__version__
+        report["silero_vad_cached"] = any(CACHE_DIR.glob("silero_vad_*.onnx"))
+    except Exception as exc:
+        problems.append(f"onnxruntime unavailable ({exc}); set pipeline.vad: energy")
 
     try:
         from .audio.microphone import list_input_devices
@@ -129,25 +151,58 @@ def cmd_devices(args: argparse.Namespace, cfg: Config) -> int:
 # -- run -------------------------------------------------------------------------------
 
 class TranscriptPrinter:
-    def __init__(self, save_dir: Path | None) -> None:
+    """Console view. Finals and utterances print as lines; on a TTY the current partial is
+    redrawn in grey on the line below the last final."""
+
+    GREY, RESET, CLEAR = "\033[90m", "\033[0m", "\r\033[K"
+
+    def __init__(self, save_dir: Path | None, show_partials: bool | None = None,
+                 show_utterances: bool = False) -> None:
         self._lock = threading.Lock()
         self._file = None
+        self.tty = sys.stdout.isatty()
+        self.show_partials = self.tty if show_partials is None else show_partials
+        self.show_utterances = show_utterances
+        self._partial_shown = False
         if save_dir is not None:
             save_dir.mkdir(parents=True, exist_ok=True)
             path = save_dir / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl"
             self._file = path.open("a")
             print(f"saving transcript to {path}", file=sys.stderr)
 
+    def _clear_partial(self) -> None:
+        if self._partial_shown and self.tty:
+            sys.stdout.write(self.CLEAR)
+        self._partial_shown = False
+
     def __call__(self, ev) -> None:
+        who = SPEAKER.get(ev.source, ev.source)
         with self._lock:
-            print(f"[{ev.start:7.1f}-{ev.end:7.1f}] {SPEAKER.get(ev.source, ev.source):>4}: {ev.text}"
-                  f"   (e2e {ev.latency_s * 1000:.0f} ms, asr {ev.inference_s * 1000:.0f} ms)",
-                  flush=True)
-            if self._file:
-                self._file.write(json.dumps(ev.__dict__) + "\n")
+            if ev.kind == "partial":
+                if not self.show_partials:
+                    return
+                if self.tty:
+                    self._clear_partial()
+                    sys.stdout.write(f"{self.GREY}{who:>4}: {ev.stable} {ev.unstable}{self.RESET}"[:400])
+                    self._partial_shown = True
+                else:
+                    print(f"  ~ {who:>4}: {ev.stable} | {ev.unstable}")
+                sys.stdout.flush()
+                return
+            self._clear_partial()
+            if ev.kind == "final" and ev.text:
+                print(f"[{ev.start:7.1f}-{ev.end:7.1f}] {who:>4}: {ev.text}"
+                      f"   ({ev.latency_s * 1000:.0f} ms after speech end,"
+                      f" asr {ev.inference_s * 1000:.0f} ms)", flush=True)
+            elif ev.kind == "utterance" and self.show_utterances:
+                print(f"  => utterance {who}: {ev.text}", flush=True)
+            if self._file and ev.text and ev.kind in ("final", "utterance"):
+                self._file.write(json.dumps(ev.to_dict()) + "\n")
                 self._file.flush()
 
     def close(self) -> None:
+        with self._lock:
+            self._clear_partial()
         if self._file:
             self._file.close()
 
@@ -157,21 +212,13 @@ def _status(name, state, detail) -> None:
 
 
 def _run_pipeline(cfg: Config, sources: list, duration: float | None,
-                  until=None) -> int:
-    from .asr.transcription import ChunkedTranscriber
-    from .asr.whisper_engine import WhisperEngine
+                  until=None, printer: TranscriptPrinter | None = None) -> int:
+    from .asr.factory import build_transcriber
     from .metrics import peak_memory_mb
 
     save_dir = PROJECT_ROOT / cfg.storage.transcript_dir if cfg.storage.save_transcripts else None
-    printer = TranscriptPrinter(save_dir)
-    pipe = ChunkedTranscriber(
-        engine_factory=lambda: WhisperEngine(cfg.asr.model, cfg.asr.language),
-        sources=sources,
-        on_event=printer,
-        chunk_seconds=cfg.pipeline.chunk_seconds,
-        silence_rms=cfg.pipeline.silence_rms,
-        queue_size=cfg.pipeline.queue_size,
-    )
+    printer = printer or TranscriptPrinter(save_dir)
+    pipe = build_transcriber(cfg, sources, printer)
     print(f"loading {cfg.asr.model} ...", file=sys.stderr)
     t0 = time.monotonic()
     pipe.start()
@@ -232,7 +279,11 @@ def _make_sources(cfg: Config, source: str) -> list:
 
 
 def cmd_run(args: argparse.Namespace, cfg: Config) -> int:
-    return _run_pipeline(cfg, _make_sources(cfg, cfg.audio.source), args.duration)
+    printer = TranscriptPrinter(
+        PROJECT_ROOT / cfg.storage.transcript_dir if cfg.storage.save_transcripts else None,
+        show_partials=True if args.partials else None, show_utterances=args.utterances)
+    return _run_pipeline(cfg, _make_sources(cfg, cfg.audio.source), args.duration,
+                         printer=printer)
 
 
 def cmd_transcribe_file(args: argparse.Namespace, cfg: Config) -> int:
@@ -244,7 +295,9 @@ def cmd_transcribe_file(args: argparse.Namespace, cfg: Config) -> int:
           file=sys.stderr)
     src = FileSource(AudioRingBuffer(cfg.audio.ring_buffer_seconds, cfg.audio.sample_rate),
                      audio, speed=args.speed)
-    return _run_pipeline(cfg, [src], None, until=src.done.is_set)
+    printer = TranscriptPrinter(None, show_partials=True if args.partials else None,
+                                show_utterances=args.utterances)
+    return _run_pipeline(cfg, [src], None, until=src.done.is_set, printer=printer)
 
 
 # -- entry -----------------------------------------------------------------------------
@@ -253,7 +306,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="openinterview", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--config", type=Path, default=None)
-    p.add_argument("--model", help="tiny.en | base.en | small.en | large-v3-turbo")
+    p.add_argument("--model",
+                   help="tiny.en | base.en | small.en | large-v3-turbo | parakeet-v2 | apple")
     p.add_argument("--save-transcript", action="store_true", help="write transcript JSONL")
     p.add_argument("-v", "--verbose", action="store_true")
     sub = p.add_subparsers(dest="command", required=True)
@@ -268,11 +322,15 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--source", choices=["mic", "system", "both"])
     r.add_argument("--device", help="mic device index or name substring")
     r.add_argument("--duration", type=float, help="stop after N seconds")
+    r.add_argument("--partials", action="store_true", help="print partials even when not a TTY")
+    r.add_argument("--utterances", action="store_true", help="print merged utterances")
     r.set_defaults(func=cmd_run)
 
     f = sub.add_parser("transcribe-file", help="replay a file through the live pipeline")
     f.add_argument("file")
     f.add_argument("--speed", type=float, default=1.0, help="1 = real time, 0 = max speed")
+    f.add_argument("--partials", action="store_true", help="print partials even when not a TTY")
+    f.add_argument("--utterances", action="store_true", help="print merged utterances")
     f.set_defaults(func=cmd_transcribe_file)
     return p
 
