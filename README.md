@@ -9,7 +9,8 @@ See [PLAN.md](PLAN.md) for the full design and phase plan.
 **Status: all five phases implemented.** Working so far:
 
 - An optional practice assistant (OpenCode), disabled by default.
-- A local web dashboard.
+- A native macOS app window (`openinterview app`), plus a local web dashboard as an
+  alternative.
 - Mic and system-audio capture, separately or both at once.
 - A BlackHole fallback when the native system-audio helper can't run.
 - Automatic recovery when helpers crash, hang, or the output device changes.
@@ -43,7 +44,8 @@ For Parakeet, also run `uv sync --extra parakeet`.
 ## Usage
 
 ```bash
-uv run openinterview serve                               # dashboard at http://127.0.0.1:8765
+uv run openinterview app                                 # the app window (recommended)
+uv run openinterview serve                               # web dashboard at http://127.0.0.1:8765
 uv run openinterview check --probe                       # environment + permission report
 uv run openinterview devices                             # list input devices
 uv run openinterview run --source mic                    # live mic transcript (Ctrl-C to stop)
@@ -99,7 +101,38 @@ so enabling the app you *see* does nothing. In both cases the tap is silently de
 
 After changing the microphone permission, quit and reopen the terminal app.
 
-## Dashboard
+## App window
+
+```bash
+uv run openinterview app
+```
+
+A native SwiftUI window (`bin/openinterview-ui`, built by `scripts/build_helper.sh`). It
+starts the backend on a private localhost port and stops it when you close the window.
+
+- **Toolbar:**
+  - a recording indicator (red, pulsing while capturing);
+  - **Answers**, which turns the assistant on or off (remembered between runs);
+  - ⚙︎ settings: source, model and mic;
+  - **Start / Stop** (⌘R);
+  - **Transcript**, which opens the full transcript in a side panel.
+- **Sidebar:** the questions, newest first, each with a status icon (thinking / answered /
+  error) and who asked it. Below the list is a field to type a question. The view follows
+  the newest question unless you have clicked an older one.
+- **Main area:** the selected question in large type, then:
+  - a short answer you can say out loud;
+  - numbered key points;
+  - a Python example with a Copy button;
+  - **Your answer**: what you said after the question, with "Check my answer" feedback.
+
+  Answers appear automatically (`assistant.mode: immediate`). Set `mode: practice` if you
+  want to reveal them by hand in the web dashboard.
+- **Bottom:** a two-line live caption bar, with the latest line and the grey partial, final
+  latency and OpenCode status. The full transcript stays out of the way in the side panel.
+
+It is a normal, visible window: no overlay, no hiding from screen sharing.
+
+## Web dashboard (alternative)
 
 ```bash
 uv run openinterview serve

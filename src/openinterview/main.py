@@ -4,6 +4,7 @@
   openinterview devices                  list input devices
   openinterview run [--source mic|system|both] [--model base.en] [--duration S]
   openinterview transcribe-file FILE [--speed 1.0] [--model base.en]
+  openinterview app                            native app window (recommended)
   openinterview serve [--port 8765]           local web dashboard
 """
 
@@ -330,6 +331,12 @@ def cmd_transcribe_file(args: argparse.Namespace, cfg: Config) -> int:
 
 # -- entry -----------------------------------------------------------------------------
 
+def cmd_app(args: argparse.Namespace, cfg: Config) -> int:
+    from .web.server import run_app
+
+    return run_app(cfg)
+
+
 def cmd_serve(args: argparse.Namespace, cfg: Config) -> int:
     from .web.server import serve
 
@@ -361,6 +368,9 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--partials", action="store_true", help="print partials even when not a TTY")
     r.add_argument("--utterances", action="store_true", help="print merged utterances")
     r.set_defaults(func=cmd_run)
+
+    sub.add_parser("app", help="open the OpenInterview window (native macOS app)") \
+        .set_defaults(func=cmd_app)
 
     w = sub.add_parser("serve", help="local web dashboard (127.0.0.1)")
     w.add_argument("--port", type=int, default=8765)

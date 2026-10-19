@@ -1,0 +1,499 @@
+// OpenInterview window layout.
+//
+//  ┌ toolbar: ● Recording · source/model subtitle ……… [Answers] [⚙︎] [Start/Stop] [Transcript] ┐
+//  │ Questions (sidebar)  │  Selected question                                              │
+//  │  ◌ How would you …   │  Short answer (large)                                           │
+//  │  ✓ What is the …     │  ① ② ③ key points                                               │
+//  │ [Ask a question…]    │  Python example [copy]   ·   Your answer + feedback              │
+//  ├──────────────────────┴─────────────────────────────────────────────────────────────────┤
+//  │ live caption: last line + partial (two lines)                       0.72 s · OpenCode │
+//  └─────────────────────────────────────────────────────────────────────────────────────────┘
+//  Full transcript: inspector panel on the right (toolbar button).
+
+import AppKit
+import SwiftUI
+
+// MARK: - root
+
+struct ContentView: View {
+    @EnvironmentObject var m: AppModel
+    @AppStorage("showTranscript") private var showTranscript = false
+    @State private var showSettings = false
+
+    var body: some View {
+        NavigationSplitView {
+            Sidebar()
+                .navigationSplitViewColumnWidth(min: 230, ideal: 270, max: 360)
+        } detail: {
+            AnswerDetail()
+                .safeAreaInset(edge: .bottom, spacing: 0) { CaptionBar() }
+        }
+        .inspector(isPresented: $showTranscript) {
+            TranscriptInspector()
+                .inspectorColumnWidth(min: 260, ideal: 320, max: 480)
+        }
+        .navigationTitle("OpenInterview")
+        .navigationSubtitle(subtitle)
+        .toolbar {
+            ToolbarItem(placement: .navigation) { RecordingBadge(state: m.state) }
+            ToolbarItemGroup(placement: .primaryAction) {
+                Toggle(isOn: Binding(get: { m.assistantOn }, set: { m.setAssistant($0) })) {
+                    Label("Answers", systemImage: "sparkles")
+                }
+                .toggleStyle(.button)
+                .help(m.assistantOn ? "Answers on: questions are answered automatically"
+                                    : "Turn on automatic answers (needs your local OpenCode server)")
+                Button { showSettings.toggle() } label: { Label("Settings", systemImage: "slider.horizontal.3") }
+                    .help("Audio source, model and microphone")
+                    .popover(isPresented: $showSettings, arrowEdge: .bottom) { SettingsPopover() }
+                Button(action: m.toggleRecording) {
+                    Label(m.running ? "Stop" : "Start", systemImage: m.running ? "stop.fill" : "record.circle")
+                        .labelStyle(.titleAndIcon)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(m.running ? .red : .accentColor)
+                .keyboardShortcut("r", modifiers: .command)
+                .disabled(m.state == "stopping")
+                .help("Start or stop listening (⌘R)")
+                Button { showTranscript.toggle() } label: { Label("Transcript", systemImage: "text.bubble") }
+                    .help("Show the full transcript")
+            }
+        }
+        .frame(minWidth: 820, minHeight: 540)
+    }
+
+    var subtitle: String {
+        let src = ["mic": "Microphone", "system": "System audio", "both": "Mic + system"][m.source] ?? m.source
+        return "\(src) · \(m.model)"
+    }
+}
+
+// MARK: - toolbar pieces
+
+struct RecordingBadge: View {
+    let state: String
+    @State private var pulse = false
+
+    var body: some View {
+        let on = state == "running"
+        HStack(spacing: 6) {
+            Circle().fill(on ? Color.red : Color.secondary.opacity(0.5))
+                .frame(width: 8, height: 8)
+                .opacity(on && pulse ? 0.3 : 1)
+                .animation(on ? .easeInOut(duration: 0.8).repeatForever() : .default, value: pulse)
+            Text(on ? "Recording" : state == "loading" ? "Starting…" : state == "stopping" ? "Stopping…" : "Idle")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(on ? Color.red : Color.secondary)
+        }
+        .padding(.horizontal, 9).padding(.vertical, 3)
+        .background(Capsule().fill(on ? Color.red.opacity(0.13) : Color.secondary.opacity(0.1)))
+        .onAppear { pulse = true }
+        .accessibilityLabel(on ? "Recording" : "Not recording")
+    }
+}
+
+struct SettingsPopover: View {
+    @EnvironmentObject var m: AppModel
+
+    var body: some View {
+        Form {
+            Picker("Listen to", selection: $m.source) {
+                Text("Mic").tag("mic")
+                Text("System").tag("system")
+                Text("Both").tag("both")
+            }
+            .pickerStyle(.segmented)
+            Picker("Model", selection: $m.model) {
+                ForEach(m.models, id: \.self) { Text($0).tag($0) }
+            }
+            Picker("Microphone", selection: $m.device) {
+                Text("System default").tag("")
+                ForEach(m.devices, id: \.self) { Text($0).tag($0) }
+            }
+            .disabled(m.source == "system")
+            if m.running {
+                Text("Stop recording to change these.").font(.caption).foregroundStyle(.secondary)
+            }
+            if m.source == "both" {
+                Text("Use headphones so the mic doesn't pick up the other side.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .disabled(m.running)
+        .frame(width: 360)
+        .padding(.vertical, 4)
+    }
+}
+
+// MARK: - sidebar
+
+struct Sidebar: View {
+    @EnvironmentObject var m: AppModel
+    @State private var question = ""
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if m.cards.isEmpty {
+                VStack(spacing: 6) {
+                    Spacer()
+                    Image(systemName: "questionmark.bubble").font(.title).foregroundStyle(.tertiary)
+                    Text("No questions yet").foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                List(selection: $m.selectedCard) {
+                    Section("Questions") {
+                        ForEach(m.cards) { card in
+                            QuestionRow(card: card).tag(card.id)
+                        }
+                    }
+                }
+                .listStyle(.sidebar)
+            }
+            Divider()
+            HStack(spacing: 6) {
+                TextField("Ask a question…", text: $question)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(send)
+                Button(action: send) { Image(systemName: "arrow.up.circle.fill").font(.title3) }
+                    .buttonStyle(.borderless)
+                    .disabled(question.trimmingCharacters(in: .whitespaces).isEmpty || !m.assistantOn)
+                    .help(m.assistantOn ? "Ask" : "Turn on Answers first")
+            }
+            .padding(10)
+        }
+    }
+
+    func send() {
+        guard m.assistantOn else { return }
+        m.ask(question)
+        question = ""
+    }
+}
+
+struct QuestionRow: View {
+    let card: Card
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Group {
+                switch card.status {
+                case "thinking": ProgressView().controlSize(.mini)
+                case "ready": Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                default: Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                }
+            }
+            .frame(width: 16, height: 16)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(card.question).lineLimit(2).font(.callout)
+                Text(speaker(card.source)).font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 3)
+    }
+}
+
+// MARK: - answer
+
+struct AnswerDetail: View {
+    @EnvironmentObject var m: AppModel
+
+    var body: some View {
+        if let id = m.selectedCard, let card = m.cards.first(where: { $0.id == id }) {
+            ScrollView {
+                AnswerView(card: card)
+                    .frame(maxWidth: 820, alignment: .leading)
+                    .padding(.horizontal, 32).padding(.vertical, 28)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
+            EmptyState()
+        }
+    }
+}
+
+struct EmptyState: View {
+    @EnvironmentObject var m: AppModel
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: m.assistantOn ? "waveform.and.mic" : "sparkles")
+                .font(.system(size: 44, weight: .light)).foregroundStyle(.tertiary)
+            Text(title).font(.title2.weight(.semibold))
+            Text(detail).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 420)
+            if !m.assistantOn {
+                Button("Turn on Answers") { m.setAssistant(true) }.buttonStyle(.borderedProminent)
+            } else if !m.running {
+                Button("Start listening", action: m.toggleRecording).buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    var title: String {
+        if !m.assistantOn { return "Answers are off" }
+        return m.running ? "Listening for a question" : "Ready"
+    }
+
+    var detail: String {
+        if !m.assistantOn {
+            return "Turn on Answers to get a short answer, key points and an example for each technical question."
+        }
+        let who = m.listenTo.map(speaker).joined(separator: " or ")
+        return "Questions asked by \(who.isEmpty ? "the speaker" : who) are answered here automatically. You can also type one in the sidebar."
+    }
+}
+
+struct AnswerView: View {
+    @EnvironmentObject var m: AppModel
+    let card: Card
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(speaker(card.source).uppercased()).font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary).tracking(0.6)
+                Text(card.question).font(.system(size: 26, weight: .bold)).textSelection(.enabled)
+            }
+
+            switch card.status {
+            case "thinking":
+                HStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text("Thinking…").font(.title3).foregroundStyle(.secondary)
+                }
+            case "error":
+                Label(card.error, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange).textSelection(.enabled)
+            default:
+                Text(card.shortAnswer)
+                    .font(.system(size: 19)).lineSpacing(5).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if !card.keyPoints.isEmpty {
+                    SectionBox(title: "Key points", icon: "list.bullet") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(Array(card.keyPoints.enumerated()), id: \.offset) { i, p in
+                                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                                    Text("\(i + 1)").font(.callout.weight(.bold).monospacedDigit())
+                                        .foregroundStyle(.white)
+                                        .frame(width: 22, height: 22)
+                                        .background(Circle().fill(Color.accentColor))
+                                        .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 5 }
+                                    Text(p).font(.system(size: 16)).textSelection(.enabled)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !card.example.isEmpty { CodeBlock(code: card.example) }
+
+                YourAnswer(card: card)
+
+                if !card.model.isEmpty {
+                    Text("\(card.model) · \(String(format: "%.1f", card.seconds)) s")
+                        .font(.caption2).foregroundStyle(.tertiary)
+                }
+            }
+        }
+    }
+}
+
+struct SectionBox<Content: View>: View {
+    let title: String
+    let icon: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(title, systemImage: icon).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            content
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.045)))
+    }
+}
+
+struct CodeBlock: View {
+    let code: String
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Label("Python", systemImage: "chevron.left.forwardslash.chevron.right")
+                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(code, forType: .string)
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                } label: {
+                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 8)
+            Divider()
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(code).font(.system(size: 13.5, design: .monospaced)).lineSpacing(3)
+                    .textSelection(.enabled).padding(14)
+            }
+        }
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .textBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.1)))
+    }
+}
+
+struct YourAnswer: View {
+    @EnvironmentObject var m: AppModel
+    let card: Card
+
+    var body: some View {
+        if !card.spoken.isEmpty {
+            SectionBox(title: "Your answer", icon: "person.wave.2") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(card.spoken.joined(separator: " ")).font(.system(size: 15))
+                        .foregroundStyle(.secondary).textSelection(.enabled)
+                    if !card.covered.isEmpty || !card.missed.isEmpty {
+                        FlowChips(items: card.covered, icon: "checkmark", color: .green)
+                        FlowChips(items: card.missed, icon: "xmark", color: .orange)
+                        if !card.tip.isEmpty {
+                            Label(card.tip, systemImage: "lightbulb").font(.callout)
+                        }
+                    } else {
+                        Button {
+                            m.grade(card.id)
+                        } label: {
+                            Label(card.feedbackStatus == "thinking" ? "Checking…" : "Check my answer",
+                                  systemImage: "checklist")
+                        }
+                        .disabled(card.feedbackStatus == "thinking")
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct FlowChips: View {
+    let items: [String]
+    let icon: String
+    let color: Color
+
+    var body: some View {
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(items, id: \.self) { item in
+                    Label(item, systemImage: icon)
+                        .font(.callout)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Capsule().fill(color.opacity(0.14)))
+                        .foregroundStyle(color)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - transcript
+
+struct CaptionBar: View {
+    @EnvironmentObject var m: AppModel
+
+    var body: some View {
+        let recent = Array(m.lines.suffix(m.partials.isEmpty ? 2 : 1))
+        let partial = m.partials.values.sorted { $0.source < $1.source }.first
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                if recent.isEmpty && partial == nil {
+                    Text(m.running ? "Listening…" : "Live captions appear here while recording.")
+                        .foregroundStyle(.tertiary)
+                }
+                ForEach(recent) { CaptionLine(line: $0, partial: false) }
+                if let partial { CaptionLine(line: partial, partial: true) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .trailing, spacing: 3) {
+                if m.running && m.finalLatency != "–" {
+                    Text(m.finalLatency).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        .help("Time from end of speech to final text (p50)")
+                }
+                if m.assistantOn {
+                    Label(m.assistantHealthy ? "OpenCode" : "OpenCode offline",
+                          systemImage: m.assistantHealthy ? "checkmark.circle" : "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(m.assistantHealthy ? Color.secondary : Color.orange)
+                        .help(m.assistantHealth)
+                }
+                ForEach(m.sourceStates.keys.sorted().filter { m.sourceStates[$0] != "running" }, id: \.self) {
+                    Text("\(speaker($0)): \(m.sourceStates[$0] ?? "")").font(.caption).foregroundStyle(.orange)
+                }
+                if !m.error.isEmpty {
+                    Text(m.error).font(.caption).foregroundStyle(.red).lineLimit(1).help(m.error)
+                }
+            }
+        }
+        .font(.callout)
+        .padding(.horizontal, 20).padding(.vertical, 10)
+        .frame(minHeight: 58)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
+    }
+}
+
+struct CaptionLine: View {
+    let line: Line
+    let partial: Bool
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(speaker(line.source)).font(.caption.weight(.bold))
+                .foregroundStyle(line.source == "mic" ? Color.teal : Color.purple)
+                .frame(width: 36, alignment: .leading)
+            if partial {
+                (Text(line.stable.isEmpty ? "" : line.stable + " ") + Text(line.unstable).foregroundColor(.secondary))
+                    .lineLimit(1).truncationMode(.head)
+            } else {
+                Text(line.text).lineLimit(1).truncationMode(.head)
+            }
+        }
+    }
+}
+
+struct TranscriptInspector: View {
+    @EnvironmentObject var m: AppModel
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            List {
+                Section("Transcript") {
+                    ForEach(m.lines) { line in
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(speaker(line.source)).font(.caption.weight(.bold))
+                                    .foregroundStyle(line.source == "mic" ? Color.teal : Color.purple)
+                                Text(String(format: "%02d:%02d", Int(line.start) / 60, Int(line.start) % 60))
+                                    .font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+                            }
+                            Text(line.text).textSelection(.enabled)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                    ForEach(m.partials.values.sorted { $0.source < $1.source }) { p in
+                        Text(p.stable + " " + p.unstable).foregroundStyle(.secondary)
+                    }
+                    Color.clear.frame(height: 1).id("bottom").listRowSeparator(.hidden)
+                }
+            }
+            .onChange(of: m.lines.count) { proxy.scrollTo("bottom") }
+        }
+    }
+}

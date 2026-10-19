@@ -231,3 +231,44 @@ def serve(cfg: Config, host: str = "127.0.0.1", port: int = 8765) -> None:
                              "(open it in the browser, or stop it first).")
     print(f"OpenInterview dashboard: http://{host}:{port}")
     uvicorn.run(create_app(cfg), host=host, port=port, log_level="warning")
+
+
+def run_app(cfg: Config, port: int = 0) -> int:
+    """Run the backend on a private localhost port and open the native window.
+
+    The backend stops (finishing the current session cleanly) when the window is closed.
+    """
+    import socket
+    import subprocess
+    import threading
+    import time
+
+    import uvicorn
+
+    from ..config import PROJECT_ROOT
+
+    ui = PROJECT_ROOT / "bin" / "openinterview-ui"
+    if not ui.is_file():
+        raise SystemExit("The app window is not built yet: run scripts/build_helper.sh")
+    if port == 0:
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(create_app(cfg), host="127.0.0.1", port=port,
+                                           log_level="warning"))
+    thread = threading.Thread(target=server.run, name="backend", daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 20
+    while not server.started:
+        if time.monotonic() > deadline or not thread.is_alive():
+            raise SystemExit("backend failed to start")
+        time.sleep(0.05)
+    window = subprocess.Popen([str(ui), "--port", str(port)])
+    try:
+        return window.wait()
+    except KeyboardInterrupt:
+        window.terminate()
+        return 0
+    finally:
+        server.should_exit = True
+        thread.join(timeout=30)
