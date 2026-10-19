@@ -345,7 +345,7 @@ struct OpenInterviewApp: App {
         WindowGroup("OpenInterview") {
             ContentView().environmentObject(model).onAppear { model.boot() }
         }
-        .defaultSize(width: 1100, height: 760)
+        .defaultSize(width: 1280, height: 580)
         .windowToolbarStyle(.unified)
     }
 }

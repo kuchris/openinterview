@@ -23,14 +23,15 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             Sidebar()
-                .navigationSplitViewColumnWidth(min: 230, ideal: 270, max: 360)
+                .navigationSplitViewColumnWidth(min: 210, ideal: 240, max: 340)
         } detail: {
             AnswerDetail()
                 .safeAreaInset(edge: .bottom, spacing: 0) { CaptionBar() }
+                .frame(minWidth: 440)
         }
         .inspector(isPresented: $showTranscript) {
             TranscriptInspector()
-                .inspectorColumnWidth(min: 260, ideal: 320, max: 480)
+                .inspectorColumnWidth(min: 220, ideal: 250, max: 420)
         }
         .navigationTitle("OpenInterview")
         .navigationSubtitle(subtitle)
@@ -59,7 +60,7 @@ struct ContentView: View {
                     .help("Show the full transcript")
             }
         }
-        .frame(minWidth: 820, minHeight: 540)
+        .frame(minWidth: 700, minHeight: 480)
     }
 
     var subtitle: String {
@@ -205,7 +206,7 @@ struct AnswerDetail: View {
             ScrollView {
                 AnswerView(card: card)
                     .frame(maxWidth: 820, alignment: .leading)
-                    .padding(.horizontal, 32).padding(.vertical, 28)
+                    .padding(.horizontal, 28).padding(.vertical, 18)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
@@ -252,11 +253,11 @@ struct AnswerView: View {
     let card: Card
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(speaker(card.source).uppercased()).font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary).tracking(0.6)
-                Text(card.question).font(.system(size: 26, weight: .bold)).textSelection(.enabled)
+                Text(card.question).font(.system(size: 22, weight: .bold)).textSelection(.enabled)
             }
 
             switch card.status {
@@ -270,20 +271,20 @@ struct AnswerView: View {
                     .foregroundStyle(.orange).textSelection(.enabled)
             default:
                 Text(card.shortAnswer)
-                    .font(.system(size: 19)).lineSpacing(5).textSelection(.enabled)
+                    .font(.system(size: 17)).lineSpacing(4).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if !card.keyPoints.isEmpty {
                     SectionBox(title: "Key points", icon: "list.bullet") {
-                        VStack(alignment: .leading, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 7) {
                             ForEach(Array(card.keyPoints.enumerated()), id: \.offset) { i, p in
                                 HStack(alignment: .firstTextBaseline, spacing: 12) {
-                                    Text("\(i + 1)").font(.callout.weight(.bold).monospacedDigit())
+                                    Text("\(i + 1)").font(.caption.weight(.bold).monospacedDigit())
                                         .foregroundStyle(.white)
-                                        .frame(width: 22, height: 22)
+                                        .frame(width: 19, height: 19)
                                         .background(Circle().fill(Color.accentColor))
                                         .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 5 }
-                                    Text(p).font(.system(size: 16)).textSelection(.enabled)
+                                    Text(p).font(.system(size: 15)).textSelection(.enabled)
                                 }
                             }
                         }
@@ -309,11 +310,11 @@ struct SectionBox<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             Label(title, systemImage: icon).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             content
         }
-        .padding(16)
+        .padding(13)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.045)))
     }
@@ -340,11 +341,11 @@ struct CodeBlock: View {
                 }
                 .buttonStyle(.borderless)
             }
-            .padding(.horizontal, 14).padding(.vertical, 8)
+            .padding(.horizontal, 12).padding(.vertical, 6)
             Divider()
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(code).font(.system(size: 13.5, design: .monospaced)).lineSpacing(3)
-                    .textSelection(.enabled).padding(14)
+                Text(code).font(.system(size: 13, design: .monospaced)).lineSpacing(2)
+                    .textSelection(.enabled).padding(12)
             }
         }
         .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .textBackgroundColor)))
