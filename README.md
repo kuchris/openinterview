@@ -165,13 +165,17 @@ How it talks to OpenCode: the documented server API, verified against OpenCode 1
 
 - `POST /session?directory=<empty temp dir>` creates the session, with
   `permission: [{"permission": "*", "pattern": "*", "action": "deny"}]`.
-- `POST /session/{id}/message` sends each question, with `agent: "plan"`, a coaching
-  `system` prompt, and `format: {"type": "json_schema", ...}`. The answer is read from
-  `info.structured`, with a fallback to JSON in the text part.
+- `POST /session/{id}/message` sends each question, with `agent: "plan"` and a coaching
+  `system` prompt that asks for a JSON object matching the answer schema. The reply's text
+  is parsed as JSON, with one retry if it isn't valid JSON.
+- OpenCode's own `format: json_schema` is **not** used. OpenCode implements it as a hidden
+  `StructuredOutput` tool, which the deny-all permission blocks. DeepSeek V4.1 Flash then
+  fails with "Model did not produce structured output".
 - **Safety:** every tool permission is denied, the agent is read-only, and the working
   directory is empty. The model can answer, but cannot read or change files or run commands.
-- **Model:** `assistant.model` picks one as `"providerID/modelID"`. `null` uses OpenCode's
-  default.
+- **Model:** `assistant.model` picks one as `"providerID/modelID"` (list them with
+  `opencode models`). `null` uses OpenCode's default. Tested with
+  `opencode-go/deepseek-v4.1-flash`: about 3 s per answer, plus feedback on a spoken answer.
 - **Errors** (server down, expired key, timeout) show on the card; transcription keeps
   running. Verified live: with an expired OpenCode Go key, the card showed OpenCode's
   "This API key has expired…" message.

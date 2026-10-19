@@ -47,8 +47,9 @@ def test_near_duplicate_question_not_asked_twice():
 # -- mock OpenCode server (shapes from OpenCode 1.19.3's /doc OpenAPI) -----------------------
 
 class MockOpenCode:
-    def __init__(self, mode="structured"):
+    def __init__(self, mode="text"):
         self.mode = mode
+        self.calls = 0
         self.requests = []
         mock = self
 
@@ -88,24 +89,27 @@ class MockOpenCode:
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
     def reply(self, body):
+        self.calls += 1
         info = {"id": "msg_1", "sessionID": "ses_test123", "role": "assistant",
                 "providerID": "opencode-go", "modelID": "test-model", "time": {"created": 1}}
-        props = body["format"]["schema"]["properties"]
+        grading = '"covered"' in body["system"]
         if self.mode == "expired":
             info["error"] = {"name": "APIError", "data": {"message": "This API key has expired."}}
             return {"info": info, "parts": []}
-        if "covered" in props:
+        if self.mode == "garbage_once" and self.calls == 1:
+            return {"info": info, "parts": [{"type": "text", "text": "Sure! A mutex is..."}]}
+        if grading:
             data = {"covered": ["memory isolation"], "missed": ["context switch cost"],
                     "tip": "Mention shared memory between threads."}
         else:
             data = {"short_answer": "A process has its own memory; threads share it.",
                     "key_points": ["isolation", "shared memory", "context switch cost"],
                     "python_example": "import threading"}
-        if self.mode == "text":  # model ignored structured output: JSON in a text part
-            return {"info": info, "parts": [{"type": "text", "text": "```json\n"
-                                             + json.dumps(data) + "\n```"}]}
-        info["structured"] = data
-        return {"info": info, "parts": []}
+        if self.mode == "structured":  # server-side structured output, if a model provides it
+            info["structured"] = data
+            return {"info": info, "parts": []}
+        return {"info": info, "parts": [{"type": "text", "text": "```json\n"
+                                         + json.dumps(data) + "\n```"}]}
 
     def close(self):
         self.server.shutdown()
@@ -133,7 +137,8 @@ def test_opencode_request_shape_and_structured_answer(mock_opencode, tmp_path):
     _, path, msg = mock_opencode.requests[2]
     assert path.startswith("/session/ses_test123/message")
     assert msg["agent"] == "plan"
-    assert msg["format"]["type"] == "json_schema"
+    # No OpenCode structured output: it is a tool, hidden by the deny-all permission.
+    assert "format" not in msg and "JSON schema" in msg["system"]
     assert msg["model"] == {"providerID": "opencode-go", "modelID": "test-model"}
     assert "Them: hi" in msg["parts"][0]["text"]
 
@@ -148,11 +153,13 @@ def test_opencode_grade(mock_opencode, tmp_path):
     assert fb.missed == ["context switch cost"] and fb.tip
 
 
-def test_opencode_text_json_fallback(tmp_path):
-    m = MockOpenCode(mode="text")
+@pytest.mark.parametrize("mode", ["structured", "garbage_once"])
+def test_opencode_structured_reply_and_retry_on_non_json(mode, tmp_path):
+    m = MockOpenCode(mode=mode)
     try:
         a = OpenCodeProvider(m.url, directory=str(tmp_path)).answer("q?", [])
         assert a.key_points == ["isolation", "shared memory", "context switch cost"]
+        assert m.calls == (2 if mode == "garbage_once" else 1)
     finally:
         m.close()
 

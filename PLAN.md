@@ -332,5 +332,6 @@ and what could not be tested in this environment.
     up to 60 s instead of restarting.
 - **Phase 5**
   - OpenCode is driven through its documented session API, with deny-all permissions, the
-    `plan` agent and an empty working directory. Answers come back as structured output
-    (`json_schema`).
+    `plan` agent and an empty working directory.
+  - Answers are JSON in the text reply. OpenCode's `json_schema` output is itself a tool,
+    which deny-all blocks.

@@ -41,7 +41,7 @@ assistant:
   enabled: false
   provider: opencode        # opencode | openai
   base_url: http://127.0.0.1:4096   # openai provider: e.g. http://127.0.0.1:11434/v1
-  model: null               # opencode: "providerID/modelID" (null = OpenCode's default model)
+  model: opencode-go/deepseek-v4.1-flash  # "providerID/modelID" (null = OpenCode default); list: opencode models
   api_key_env: OPENAI_API_KEY  # openai provider only: the key is read from this env var
   mode: practice            # practice (answer hidden until you reveal) | immediate
   listen_to: [system]       # whose complete sentences may be questions: system ("Them"), mic

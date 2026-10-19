@@ -9,8 +9,12 @@ API (verified against OpenCode 1.19.3's OpenAPI spec at /doc):
 Safety: the session is created with every tool permission denied and uses the read-only
 "plan" agent, in an empty working directory, so the model can only answer, never read or
 change files or run commands. One OpenCode session is kept per practice run, so follow-up
-questions keep their context. Answers use OpenCode's structured output
-(format=json_schema), returned in info.structured.
+questions keep their context.
+
+Output: the model is asked for a JSON object in its text reply, which is parsed (with one
+retry). OpenCode's own structured output (format=json_schema) is *not* used: OpenCode
+implements it as a "StructuredOutput" tool, which the deny-all permission hides, and some
+models (e.g. DeepSeek V4.1 Flash) then fail with StructuredOutputError.
 
 OpenAICompatibleProvider is a lighter alternative for any /v1/chat/completions server.
 """
@@ -105,6 +109,11 @@ def _grade_prompt(question: str, answer: Answer, spoken: str) -> str:
             f"which did they miss? Give one short, specific tip.")
 
 
+def _json_instruction(schema: dict) -> str:
+    return ("Reply with only a JSON object (no prose, no code fences) matching this JSON "
+            f"schema: {json.dumps(schema)}")
+
+
 def _parse_json_text(text: str) -> dict:
     text = text.strip()
     if text.startswith("```"):
@@ -180,9 +189,9 @@ class OpenCodeProvider:
             self.session_id = s["id"]
         return self.session_id
 
-    def _ask(self, text: str, schema: dict) -> tuple[dict, str]:
-        body: dict = {"agent": self.agent, "system": SYSTEM_PROMPT,
-                      "format": {"type": "json_schema", "schema": schema},
+    def _send(self, text: str, schema: dict) -> tuple[dict, str]:
+        body: dict = {"agent": self.agent,
+                      "system": SYSTEM_PROMPT + " " + _json_instruction(schema),
                       "parts": [{"type": "text", "text": text}]}
         if self.model and "/" in self.model:
             provider, model = self.model.split("/", 1)
@@ -198,6 +207,14 @@ class OpenCodeProvider:
             return info["structured"], model
         text = "".join(p.get("text", "") for p in r.get("parts", []) if p.get("type") == "text")
         return _parse_json_text(text), model
+
+    def _ask(self, text: str, schema: dict) -> tuple[dict, str]:
+        try:
+            return self._send(text, schema)
+        except (ProviderError, ValueError) as exc:
+            if isinstance(exc, ProviderError) and not str(exc).startswith("model did not"):
+                raise  # transport / auth errors: retrying will not help
+            return self._send("Your previous reply was not valid JSON. " + text, schema)
 
     def answer(self, question: str, context: list[str]) -> Answer:
         t0 = time.monotonic()
@@ -239,8 +256,7 @@ class OpenAICompatibleProvider:
             return False, str(exc)
 
     def _chat(self, text: str, schema: dict) -> dict:
-        messages = [{"role": "system", "content": SYSTEM_PROMPT + " Reply with only a JSON "
-                     f"object matching this JSON schema: {json.dumps(schema)}"},
+        messages = [{"role": "system", "content": SYSTEM_PROMPT + " " + _json_instruction(schema)},
                     *self.history[-8:], {"role": "user", "content": text}]
         r = self.http.request("POST", "/chat/completions", {
             "model": self.model, "messages": messages, "temperature": 0.2,
