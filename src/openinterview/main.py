@@ -176,19 +176,12 @@ class TranscriptPrinter:
 
     GREY, RESET, CLEAR = "\033[90m", "\033[0m", "\r\033[K"
 
-    def __init__(self, save_dir: Path | None, show_partials: bool | None = None,
-                 show_utterances: bool = False) -> None:
+    def __init__(self, show_partials: bool | None = None, show_utterances: bool = False) -> None:
         self._lock = threading.Lock()
-        self._file = None
         self.tty = sys.stdout.isatty()
         self.show_partials = self.tty if show_partials is None else show_partials
         self.show_utterances = show_utterances
         self._partial_shown = False
-        if save_dir is not None:
-            save_dir.mkdir(parents=True, exist_ok=True)
-            path = save_dir / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl"
-            self._file = path.open("a")
-            print(f"saving transcript to {path}", file=sys.stderr)
 
     def _clear_partial(self) -> None:
         if self._partial_shown and self.tty:
@@ -219,15 +212,10 @@ class TranscriptPrinter:
                       flush=True)
             elif ev.kind == "utterance" and self.show_utterances:
                 print(f"  => utterance {who}: {ev.text}", flush=True)
-            if self._file and (ev.kind == "retract" or (ev.text and ev.kind in ("final", "utterance"))):
-                self._file.write(json.dumps(ev.to_dict()) + "\n")
-                self._file.flush()
 
     def close(self) -> None:
         with self._lock:
             self._clear_partial()
-        if self._file:
-            self._file.close()
 
 
 def _status(name, state, detail) -> None:
@@ -239,9 +227,21 @@ def _run_pipeline(cfg: Config, sources: list, duration: float | None,
     from .asr.factory import build_transcriber
     from .metrics import peak_memory_mb
 
-    save_dir = PROJECT_ROOT / cfg.storage.transcript_dir if cfg.storage.save_transcripts else None
-    printer = printer or TranscriptPrinter(save_dir)
-    pipe = build_transcriber(cfg, sources, printer)
+    printer = printer or TranscriptPrinter()
+    record = None
+    if cfg.storage.save_sessions and not getattr(sources[0], "is_file_source", False):
+        from .store import SessionStore, resolve_dir
+
+        record = SessionStore(resolve_dir(cfg.storage.sessions_dir)).create(
+            "", cfg.audio.source, cfg.asr.model, {})
+        print(f"saving session to {record.folder}", file=sys.stderr)
+
+    def on_event(ev) -> None:
+        printer(ev)
+        if record is not None:
+            record.on_message({"type": "transcript", "event": ev.to_dict()})
+
+    pipe = build_transcriber(cfg, sources, on_event)
     print(f"loading {cfg.asr.model} ...", file=sys.stderr)
     t0 = time.monotonic()
     pipe.start()
@@ -258,6 +258,8 @@ def _run_pipeline(cfg: Config, sources: list, duration: float | None,
         for src in sources:
             src.start()
             started.append(src)
+        if record is not None and cfg.storage.save_audio:
+            record.start_audio(started)
         deadline = time.monotonic() + duration if duration else None
         while not stop.is_set():
             if deadline and time.monotonic() >= deadline:
@@ -272,6 +274,8 @@ def _run_pipeline(cfg: Config, sources: list, duration: float | None,
             src.stop()
         pipe.stop(drain=True)
         printer.close()
+        if record is not None:
+            record.finish()
 
     summary = {
         "model": cfg.asr.model,
@@ -309,9 +313,8 @@ def _make_sources(cfg: Config, source: str) -> list:
 
 
 def cmd_run(args: argparse.Namespace, cfg: Config) -> int:
-    printer = TranscriptPrinter(
-        PROJECT_ROOT / cfg.storage.transcript_dir if cfg.storage.save_transcripts else None,
-        show_partials=True if args.partials else None, show_utterances=args.utterances)
+    printer = TranscriptPrinter(show_partials=True if args.partials else None,
+                                show_utterances=args.utterances)
     return _run_pipeline(cfg, _make_sources(cfg, cfg.audio.source), args.duration,
                          printer=printer)
 
@@ -325,7 +328,7 @@ def cmd_transcribe_file(args: argparse.Namespace, cfg: Config) -> int:
           file=sys.stderr)
     src = FileSource(AudioRingBuffer(cfg.audio.ring_buffer_seconds, cfg.audio.sample_rate),
                      audio, speed=args.speed)
-    printer = TranscriptPrinter(None, show_partials=True if args.partials else None,
+    printer = TranscriptPrinter(show_partials=True if args.partials else None,
                                 show_utterances=args.utterances)
     return _run_pipeline(cfg, [src], None, until=src.done.is_set, printer=printer)
 
@@ -400,7 +403,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--config", type=Path, default=None)
     p.add_argument("--model",
                    help="tiny.en | base.en | small.en | large-v3-turbo | parakeet-v2 | apple")
-    p.add_argument("--save-transcript", action="store_true", help="write transcript JSONL")
+    p.add_argument("--no-save", action="store_true", help="don't save this run as a session")
+    p.add_argument("--no-audio", action="store_true", help="save the session without audio")
     p.add_argument("-v", "--verbose", action="store_true")
     sub = p.add_subparsers(dest="command", required=True)
 
@@ -448,8 +452,10 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(args.config)
     if args.model:
         cfg.asr.model = args.model
-    if args.save_transcript:
-        cfg.storage.save_transcripts = True
+    if args.no_save:
+        cfg.storage.save_sessions = False
+    if args.no_audio:
+        cfg.storage.save_audio = False
     if getattr(args, "source", None):
         cfg.audio.source = args.source
     if getattr(args, "device", None):

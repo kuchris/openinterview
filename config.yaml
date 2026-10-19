@@ -32,8 +32,11 @@ pipeline:
   echo_suppression: true   # in "both" mode, drop mic speech that is the speakers' system audio
 
 storage:
-  save_transcripts: false  # audio is never written to disk
-  transcript_dir: transcripts
+  # Each Start creates a session folder: Q&A cards, your answers + feedback, transcript,
+  # and (if save_audio) one .m4a per source. Local only; delete sessions in the app.
+  save_sessions: true
+  save_audio: true         # recording the other side may require their consent
+  sessions_dir: null       # null = ~/.openinterview/sessions
 
 assistant:
   # Optional practice assistant. Disabled by default; ASR works without it.

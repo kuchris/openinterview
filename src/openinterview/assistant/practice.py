@@ -87,6 +87,7 @@ class PracticeAssistant:
         self.enabled = False
         self.health = (False, "not checked")
         self.session_source = "mic"
+        self.target: dict = {}
         self.detector = QuestionDetector(DetectorConfig(filter_small_talk=cfg.filter_small_talk))
         self.cards: OrderedDict[int, dict] = OrderedDict()
         self.context: deque[str] = deque(maxlen=12)
@@ -105,6 +106,8 @@ class PracticeAssistant:
             if enabled and self.provider is None:
                 try:
                     self.provider = self.provider_factory(self.cfg)
+                    if self.target and hasattr(self.provider, "set_context"):
+                        self.provider.set_context(profile.load(self.profile_path), self.target)
                 except Exception as exc:
                     self.health = (False, str(exc))
                     self.enabled = False
@@ -115,6 +118,22 @@ class PracticeAssistant:
                                                     daemon=True)
                     self._worker.start()
         self._publish_state()
+
+    def new_session(self, target: dict) -> None:
+        """A new recording session: clear its questions and transcript context, and give the
+        model a fresh conversation that knows this interview's target."""
+        with self._lock:
+            self.cards.clear()
+            self.context.clear()
+            self.target = dict(target)
+            self.detector = QuestionDetector(DetectorConfig(
+                filter_small_talk=self.cfg.filter_small_talk))
+            provider = self.provider
+        if provider is not None and hasattr(provider, "set_context"):
+            threading.Thread(target=provider.set_context,
+                             args=(profile.load(self.profile_path), self.target),
+                             daemon=True).start()
+        self.publish({"type": "assistant_snapshot", **self.snapshot()})
 
     # -- personal profile ------------------------------------------------------------------
 
@@ -182,7 +201,7 @@ class PracticeAssistant:
                 self.session_source = msg["source"]
                 self._publish_state()
             if msg.get("state") == "loading":
-                self.context.clear()  # new recording session
+                self.new_session(msg.get("target") or {})
             return
         if msg.get("type") != "transcript" or msg["event"]["kind"] != "utterance":
             return
@@ -267,7 +286,8 @@ class PracticeAssistant:
     def state(self) -> dict:
         return {"enabled": self.enabled, "mode": self.cfg.mode, "provider": self.cfg.provider,
                 "healthy": self.health[0], "health": self.health[1],
-                "listen_to": self.listening_to(), "profile": self.profile_info()}
+                "listen_to": self.listening_to(), "profile": self.profile_info(),
+                "target": self.target}
 
     def snapshot(self) -> dict:
         with self._lock:

@@ -9,12 +9,12 @@ publishes everything through a single `sink(message: dict)` callback. Messages:
   {"type": "metrics",    ...pipeline / source / memory stats}
 
 The sink is called from worker threads; the web server marshals onto its event loop.
-Audio is never stored. Transcript persistence (JSONL) is opt-in per session.
+With storage.save_sessions each run is saved as a session folder (store.py): transcript,
+Q&A cards and, with save_audio, one audio file per source. Both can be turned off.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import threading
 import time
@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from .config import PROJECT_ROOT, Config
+from .config import Config
 
 log = logging.getLogger(__name__)
 
@@ -51,15 +51,18 @@ class Session:
         self.started_at: float | None = None
         self.listeners: list[Callable[[dict], None]] = []   # e.g. the practice assistant
         self._lock = threading.RLock()
-        self._file = None
-        self.transcript_path: Path | None = None
+        self.record = None  # store.SessionRecord while saving
+        self.title = ""
+        self.target: dict = {}
         self._metrics_thread: threading.Thread | None = None
         self._stop_metrics = threading.Event()
 
     # -- control -------------------------------------------------------------------------
 
     def start(self, source: str | None = None, model: str | None = None,
-              mic_device: str | int | None = None, save_transcript: bool | None = None) -> None:
+              mic_device: str | int | None = None, save: bool | None = None,
+              save_audio: bool | None = None, title: str = "",
+              target: dict | None = None) -> None:
         with self._lock:
             if self.state in ("loading", "running", "stopping"):
                 raise RuntimeError(f"session is {self.state}")
@@ -68,9 +71,13 @@ class Session:
                             mic_device=mic_device if mic_device not in ("", None)
                             else cfg.audio.mic_device)
             asr = replace(cfg.asr, model=model or cfg.asr.model)
-            storage = replace(cfg.storage, save_transcripts=cfg.storage.save_transcripts
-                              if save_transcript is None else save_transcript)
+            storage = replace(cfg.storage,
+                              save_sessions=cfg.storage.save_sessions if save is None else save,
+                              save_audio=cfg.storage.save_audio if save_audio is None else save_audio)
             self.cfg = replace(cfg, audio=audio, asr=asr, storage=storage)
+            self.title = title.strip()
+            self.target = {k: str(v).strip() for k, v in (target or {}).items()
+                           if k in ("company", "role", "job_description") and str(v).strip()}
             self.lines.clear()
             self.partials.clear()
             self.error = ""
@@ -103,10 +110,17 @@ class Session:
             self.transcriber.ready.wait()
             if self.transcriber.load_error:
                 raise RuntimeError(f"model load failed: {self.transcriber.load_error}")
-            if cfg.storage.save_transcripts:
-                self._open_transcript_file()
+            if cfg.storage.save_sessions:
+                from .store import SessionStore, resolve_dir
+
+                title = self.title or " ".join(v for v in (self.target.get("company"),
+                                                           self.target.get("role")) if v)
+                self.record = SessionStore(resolve_dir(cfg.storage.sessions_dir)).create(
+                    title, cfg.audio.source, cfg.asr.model, self.target)
             for src in self.sources:
                 src.start()
+            if self.record is not None and cfg.storage.save_audio:
+                self.record.start_audio(self.sources)
             with self._lock:
                 if self.state == "stopping":
                     return
@@ -144,9 +158,11 @@ class Session:
             self._metrics_thread.join(2)
         self.publish({"type": "metrics", **self.metrics()})
         self.partials.clear()
-        if self._file:
-            self._file.close()
-            self._file = None
+        record, self.record = self.record, None
+        if record is not None:
+            stats = self.transcriber.stats() if self.transcriber is not None else {}
+            record.finish({k: stats.get(k) for k in ("finals", "segments", "final_latency_ms")})
+            self.publish({"type": "session_saved", "id": record.meta["id"]})
 
     # -- events ------------------------------------------------------------------------------
 
@@ -155,6 +171,11 @@ class Session:
             self.sink(msg)
         except Exception:
             log.exception("sink failed")
+        if self.record is not None:
+            try:
+                self.record.on_message(msg)
+            except Exception:
+                log.exception("session record failed")
         for fn in list(self.listeners):
             try:
                 fn(msg)
@@ -183,17 +204,7 @@ class Session:
                                     if not (x["source"] == ev.source
                                             and x["segment_id"] == ev.segment_id)),
                                    maxlen=self.lines.maxlen)
-            if self._file and (ev.kind in ("final", "utterance", "retract")
-                               and (ev.text or ev.kind == "retract")):
-                self._file.write(json.dumps(d) + "\n")
-                self._file.flush()
         self.publish({"type": "transcript", "event": d})
-
-    def _open_transcript_file(self) -> None:
-        folder = PROJECT_ROOT / self.cfg.storage.transcript_dir
-        folder.mkdir(parents=True, exist_ok=True)
-        self.transcript_path = folder / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl"
-        self._file = self.transcript_path.open("a")
 
     def _metrics_loop(self) -> None:
         while not self._stop_metrics.wait(1.0):
@@ -207,8 +218,10 @@ class Session:
             "error": self.error,
             "source": self.cfg.audio.source,
             "model": self.cfg.asr.model,
-            "saving": bool(self._file),
-            "transcript_path": str(self.transcript_path) if self._file else None,
+            "saving": self.record is not None,
+            "session_id": self.record.meta["id"] if self.record is not None else None,
+            "title": self.title,
+            "target": self.target,
             "started_at": self.started_at,
         }
 

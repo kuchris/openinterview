@@ -23,6 +23,7 @@ def load_audio(path: str, sample_rate: int = 16000) -> np.ndarray:
 
 
 class FileSource:
+    is_file_source = True  # replays are never saved as sessions
     def __init__(
         self,
         buffer: AudioRingBuffer,

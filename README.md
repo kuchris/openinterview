@@ -55,7 +55,8 @@ uv run openinterview run --source system --system-backend blackhole
 uv run openinterview --model base.en run --source both   # use headphones in this mode
 uv run openinterview --model apple run --source system   # Apple on-device streaming ASR
 uv run openinterview transcribe-file talk.wav --speed 1 --utterances  # replay a file live
-uv run openinterview --save-transcript run               # opt-in transcript JSONL in transcripts/
+uv run openinterview run --no-audio                      # save the session as text only
+uv run openinterview run --no-save                       # save nothing
 ```
 
 Models:
@@ -114,8 +115,9 @@ starts the backend on a private localhost port and stops it when you close the w
   - a recording indicator (red, pulsing while capturing);
   - **Answers**, which turns the assistant on or off (remembered between runs);
   - ⚙︎ settings: source, model and mic;
-  - **Start / Stop** (⌘R);
-  - **Transcript**, which opens the full transcript in a side panel.
+  - **Start / Stop** (⌘R). Start opens a short **New session** sheet (see below);
+  - **Transcript**, which opens the full transcript in a side panel;
+  - **History**, which opens past sessions.
 - **Sidebar:** the questions, newest first, each with a status icon (thinking / answered /
   error) and who asked it. Below the list is a field to type a question. The view follows
   the newest question unless you have clicked an older one.
@@ -131,6 +133,47 @@ starts the backend on a private localhost port and stops it when you close the w
   latency and OpenCode status. The full transcript stays out of the way in the side panel.
 
 It is a normal, visible window: no overlay, no hiding from screen sharing.
+
+## Sessions and history
+
+Each Start begins a new session. The **New session** sheet asks for:
+
+- a **title**;
+- the **company**, **role** and an optional **job description**. These go into the
+  assistant's prompt for this session only, so answers ("why do you want to work here?")
+  are tailored to that interview. The assistant starts fresh each session.
+- **Save this session** and **Record audio** toggles.
+
+The sheet remembers your last entries. **Clear** empties them.
+
+Saved sessions stay on this Mac, one folder each:
+
+```
+~/.openinterview/sessions/20261019-160512-acme-backend/
+    session.json       title, times, source, model, target, Q&A cards
+    transcript.jsonl   finals in order (echo retractions included)
+    mic.m4a            audio per source, AAC 32 kbps (~15 MB/hour)
+    system.m4a
+```
+
+The **History** window (toolbar clock icon) lists them. For each session you can:
+
+- play back the audio;
+- read the questions and answers and the transcript;
+- show the folder in Finder;
+- delete it (removes the folder).
+
+Set the defaults in `config.yaml`:
+
+```yaml
+storage:
+  save_sessions: true   # false: keep nothing on disk
+  save_audio: true      # false: text only
+  sessions_dir: null    # default ~/.openinterview/sessions
+```
+
+Audio recording captures the other party too. Only record with their consent, and where
+it is allowed.
 
 ## Web dashboard (alternative)
 
@@ -149,8 +192,8 @@ Then open <http://127.0.0.1:8765>. The server binds to localhost only.
   with committed words darker and the changing tail grey. Echo retractions remove lines.
 - **Latency panel:** final latency p50/p95, first partial, ASR time per final, RTF, queue
   depth, dropped finals / echo removals, memory. Updates every second.
-- **Export .md** downloads the in-memory transcript. Audio is never stored. With "Save
-  transcript" on, finals are also appended to `transcripts/<timestamp>.jsonl`.
+- **Export .md** downloads the in-memory transcript. "Save session" and "Record audio"
+  control what is kept on disk (see [Sessions](#sessions-and-history)).
 
 WebSocket messages (`/ws`): `snapshot`, `status`, `source`, `transcript` (partial / final /
 utterance / retract), `metrics`. Partials are coalesced to one per source per 100 ms.

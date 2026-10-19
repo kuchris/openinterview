@@ -110,6 +110,7 @@ def make_client(tmp_path, builder):
     from openinterview.web.server import create_app
 
     cfg = Config()
+    cfg.storage.save_sessions = False
     cfg.assistant.profile_path = str(tmp_path / "profile.md")
     return TestClient(create_app(cfg, provider_factory=lambda c: builder))
 

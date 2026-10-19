@@ -17,6 +17,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var m: AppModel
+    @Environment(\.openWindow) private var openWindow
     @AppStorage("showTranscript") private var showTranscript = false
     @State private var showSettings = false
 
@@ -35,6 +36,15 @@ struct ContentView: View {
         }
         .navigationTitle("OpenInterview")
         .navigationSubtitle(subtitle)
+        .sheet(isPresented: $m.showNewSession) { NewSessionSheet() }
+        .onAppear {
+            // Development aid for UI checks: open a window or sheet at launch.
+            switch ProcessInfo.processInfo.environment["OPENINTERVIEW_UI_OPEN"] {
+            case "history": openWindow(id: "history")
+            case "newsession": m.showNewSession = true
+            default: break
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .navigation) { RecordingBadge(state: m.state) }
             ToolbarItemGroup(placement: .primaryAction) {
@@ -58,6 +68,10 @@ struct ContentView: View {
                 .help("Start or stop listening (⌘R)")
                 Button { showTranscript.toggle() } label: { Label("Transcript", systemImage: "text.bubble") }
                     .help("Show the full transcript")
+                Button { openWindow(id: "history") } label: {
+                    Label("History", systemImage: "clock.arrow.circlepath")
+                }
+                .help("Saved sessions: questions, answers, transcript and audio")
             }
         }
         .frame(minWidth: 700, minHeight: 480)
@@ -65,6 +79,9 @@ struct ContentView: View {
 
     var subtitle: String {
         let src = ["mic": "Microphone", "system": "System audio", "both": "Mic + system"][m.source] ?? m.source
+        if m.running && !m.currentTitle.isEmpty {
+            return "\(m.currentTitle) · \(src)\(m.currentSaving ? " · saving" : "")"
+        }
         return "\(src) · \(m.model)"
     }
 }
@@ -546,5 +563,51 @@ struct TranscriptInspector: View {
             }
             .onChange(of: m.lines.count) { proxy.scrollTo("bottom") }
         }
+    }
+}
+
+
+// MARK: - new session
+
+struct NewSessionSheet: View {
+    @EnvironmentObject var m: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("New session").font(.title2.weight(.semibold)).padding([.horizontal, .top], 20)
+            Text("Answers are tailored to this interview. Leave fields empty for general practice.")
+                .font(.callout).foregroundStyle(.secondary).padding(.horizontal, 20).padding(.top, 2)
+            Form {
+                TextField("Title", text: $m.sessionTitle, prompt: Text("e.g. Mock interview, round 2"))
+                TextField("Company", text: $m.company, prompt: Text("optional"))
+                TextField("Role", text: $m.role, prompt: Text("optional"))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Job description")
+                    TextEditor(text: $m.jobDescription)
+                        .font(.callout).frame(height: 110)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25)))
+                    Text("Optional. Paste the posting so answers stress what this role asks for.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Toggle("Save this session", isOn: $m.saveSession)
+                Toggle("Record audio", isOn: $m.saveAudio).disabled(!m.saveSession)
+                if m.saveSession && m.saveAudio && m.source != "mic" {
+                    Text("Recording the other side of a call may require their consent.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+            }
+            .formStyle(.grouped)
+            HStack {
+                Button("Clear fields") {
+                    m.sessionTitle = ""; m.company = ""; m.role = ""; m.jobDescription = ""
+                }
+                Spacer()
+                Button("Cancel") { m.showNewSession = false }.keyboardShortcut(.cancelAction)
+                Button("Start") { m.startSession() }
+                    .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+            }
+            .padding(20)
+        }
+        .frame(width: 520)
     }
 }

@@ -105,6 +105,17 @@ final class AppModel: ObservableObject {
     @Published var profileBusy = false
     @Published var cards: [Card] = []
     @Published var selectedCard: Int?
+    // next session (pre-filled from the last one)
+    @Published var showNewSession = false
+    @Published var sessionTitle = UserDefaults.standard.string(forKey: "sessionTitle") ?? ""
+    @Published var company = UserDefaults.standard.string(forKey: "company") ?? ""
+    @Published var role = UserDefaults.standard.string(forKey: "role") ?? ""
+    @Published var jobDescription = UserDefaults.standard.string(forKey: "jobDescription") ?? ""
+    @Published var saveSession = UserDefaults.standard.object(forKey: "saveSession") as? Bool ?? true
+    @Published var saveAudio = UserDefaults.standard.object(forKey: "saveAudio") as? Bool ?? true
+    // current session
+    @Published var currentTitle = ""
+    @Published var currentSaving = false
     private var socket: URLSessionWebSocketTask?
     private var booted = false
 
@@ -160,16 +171,30 @@ final class AppModel: ObservableObject {
 
     func toggleRecording() {
         error = ""
+        if running {
+            Task { await request("POST", "api/stop") }
+        } else {
+            showNewSession = true  // each Start is a new session: confirm its details
+        }
+    }
+
+    func startSession() {
+        showNewSession = false
+        let d = UserDefaults.standard
+        for (k, v) in [("model", model), ("source", source), ("device", device),
+                       ("sessionTitle", sessionTitle), ("company", company), ("role", role),
+                       ("jobDescription", jobDescription)] {
+            d.set(v, forKey: k)
+        }
+        d.set(saveSession, forKey: "saveSession")
+        d.set(saveAudio, forKey: "saveAudio")
         Task {
-            if running {
-                await request("POST", "api/stop")
-            } else {
-                for (k, v) in [("model", model), ("source", source), ("device", device)] {
-                    UserDefaults.standard.set(v, forKey: k)
-                }
-                await request("POST", "api/start", ["source": source, "model": model,
-                                                     "mic_device": device.isEmpty ? NSNull() : device])
-            }
+            await request("POST", "api/start", [
+                "source": source, "model": model,
+                "mic_device": device.isEmpty ? NSNull() : device,
+                "title": sessionTitle, "save": saveSession, "save_audio": saveSession && saveAudio,
+                "target": ["company": company, "role": role, "job_description": jobDescription],
+            ])
         }
     }
 
@@ -228,6 +253,13 @@ final class AppModel: ObservableObject {
 
     private func applyStatus(_ s: [String: Any]) {
         state = s["state"] as? String ?? state
+        currentSaving = s["saving"] as? Bool ?? false
+        let target = s["target"] as? [String: Any] ?? [:]
+        let parts = [s["title"] as? String, target["company"] as? String, target["role"] as? String]
+            .compactMap { $0 }.filter { !$0.isEmpty }
+        currentTitle = parts.first.map { first in
+            (s["title"] as? String ?? "").isEmpty ? parts.joined(separator: " · ") : first
+        } ?? ""
         if let e = s["error"] as? String, !e.isEmpty { error = e }
     }
 
@@ -370,6 +402,8 @@ final class AppModel: ObservableObject {
             for (name, st) in msg["sources"] as? [String: Any] ?? [:] {
                 if let d = st as? [String: Any], let s = d["state"] as? String { sourceStates[name] = s }
             }
+        case "session_saved":
+            NotificationCenter.default.post(name: .sessionSaved, object: msg["id"])
         case "assistant_snapshot":
             applyAssistant(msg)
             cards = (msg["cards"] as? [[String: Any]] ?? []).map(Card.init).sorted { $0.id > $1.id }
@@ -395,7 +429,11 @@ final class AppModel: ObservableObject {
     }
 }
 
-// Views live in Views.swift.
+// Views live in Views.swift (main window) and History.swift (saved sessions).
+
+extension Notification.Name {
+    static let sessionSaved = Notification.Name("OpenInterviewSessionSaved")
+}
 
 /// Capture this app's own window (no screen-recording permission is needed for your own
 /// windows). CGWindowListCreateImage is looked up at runtime because newer SDKs hide it.
@@ -417,13 +455,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let path = ProcessInfo.processInfo.environment["OPENINTERVIEW_UI_SNAPSHOT"] {
             let delay = Double(ProcessInfo.processInfo.environment["OPENINTERVIEW_UI_SNAPSHOT_DELAY"] ?? "") ?? 5
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                if let window = NSApp.windows.first(where: { $0.isVisible }),
+                let wanted = ProcessInfo.processInfo.environment["OPENINTERVIEW_UI_SNAPSHOT_TITLE"]
+                if let window = NSApp.windows.first(where: { $0.isVisible && (wanted == nil || $0.title == wanted) })
+                    ?? NSApp.windows.first(where: { $0.isVisible }),
                    let image = captureOwnWindow(window) {
                     let rep = NSBitmapImageRep(cgImage: image)
                     try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
                 }
                 if ProcessInfo.processInfo.environment["OPENINTERVIEW_UI_SNAPSHOT_QUIT"] != nil {
-                    NSApp.terminate(nil)
+                    exit(0)  // terminate() can be blocked by an open sheet
                 }
             }
         }
@@ -436,6 +476,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct OpenInterviewApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var model = AppModel()
+    @StateObject private var history = HistoryModel()
 
     var body: some Scene {
         WindowGroup("OpenInterview") {
@@ -443,5 +484,10 @@ struct OpenInterviewApp: App {
         }
         .defaultSize(width: 1280, height: 580)
         .windowToolbarStyle(.unified)
+
+        Window("Session history", id: "history") {
+            HistoryView().environmentObject(history)
+        }
+        .defaultSize(width: 1100, height: 680)
     }
 }

@@ -5,7 +5,8 @@
 HTTP
   GET  /                   dashboard (static/index.html)
   GET  /api/state          options (models, sources, devices) + session snapshot
-  POST /api/start          {"source", "model", "mic_device", "save_transcript"}
+  POST /api/start          {"source", "model", "mic_device", "save", "save_audio",
+                            "title", "target": {"company", "role", "job_description"}}
   POST /api/stop
   GET  /api/transcript.md  export the in-memory transcript
   GET  /api/assistant      practice assistant state + cards
@@ -17,6 +18,10 @@ HTTP
   POST /api/profile/edit   create the template if needed; returns the path to open
   POST /api/profile/reload re-read the profile after editing
   GET  /api/profile/prompt prompt to finish the profile in ChatGPT / Claude
+  GET  /api/sessions       saved sessions (newest first)
+  GET  /api/sessions/{id}  one session: target, Q&A cards, transcript, audio paths
+  GET  /api/sessions/{id}/audio/{source}       the session's audio file
+  DELETE /api/sessions/{id}                     delete a saved session
   POST /api/profile/paste  {"text": reply}     replace the profile with the model's result
 WebSocket /ws
   server -> client: the Session messages (status, source, transcript, metrics) plus a
@@ -104,7 +109,8 @@ class Hub:
 def create_app(cfg: Config, session_factory=None, provider_factory=make_provider) -> FastAPI:
     hub = Hub()
     session: Session = (session_factory or Session)(cfg, hub.sink)
-    assistant = PracticeAssistant(cfg.assistant, hub.sink, provider_factory)
+    # Through the session, so the saved session record also gets the Q&A cards.
+    assistant = PracticeAssistant(cfg.assistant, session.publish, provider_factory)
     session.listeners.append(assistant.on_message)
 
     @asynccontextmanager
@@ -135,9 +141,14 @@ def create_app(cfg: Config, session_factory=None, provider_factory=make_provider
         if body.get("source") not in (None, "mic", "system", "both"):
             raise HTTPException(400, "source must be mic, system or both")
         try:
+            target = body.get("target") or {}
+            if not isinstance(target, dict):
+                raise HTTPException(400, "target must be an object")
             session.start(source=body.get("source"), model=body.get("model"),
                           mic_device=body.get("mic_device"),
-                          save_transcript=body.get("save_transcript"))
+                          save=body.get("save", body.get("save_transcript")),
+                          save_audio=body.get("save_audio"),
+                          title=str(body.get("title") or ""), target=target)
         except RuntimeError as exc:
             raise HTTPException(409, str(exc)) from exc
         return session.status()
@@ -201,6 +212,42 @@ def create_app(cfg: Config, session_factory=None, provider_factory=make_provider
         prof.ensure_template(assistant.profile_path)
         return assistant.profile_info()
 
+    from ..store import SessionStore, resolve_dir
+
+    store = SessionStore(resolve_dir(cfg.storage.sessions_dir))
+
+    @app.get("/api/sessions")
+    async def sessions_list():
+        return {"sessions": await asyncio.to_thread(store.list), "folder": str(store.folder),
+                "current": session.record.meta["id"] if session.record is not None else None}
+
+    @app.get("/api/sessions/{session_id}")
+    async def sessions_get(session_id: str):
+        try:
+            return await asyncio.to_thread(store.load, session_id)
+        except KeyError as exc:
+            raise HTTPException(404, "no such session") from exc
+
+    @app.get("/api/sessions/{session_id}/audio/{source}")
+    async def sessions_audio(session_id: str, source: str):
+        try:
+            paths = store.load(session_id)["audio_paths"]
+        except KeyError as exc:
+            raise HTTPException(404, "no such session") from exc
+        if source not in paths:
+            raise HTTPException(404, "no audio for that source")
+        return FileResponse(paths[source])
+
+    @app.delete("/api/sessions/{session_id}")
+    async def sessions_delete(session_id: str):
+        if session.record is not None and session.record.meta["id"] == session_id:
+            raise HTTPException(409, "stop recording before deleting the current session")
+        try:
+            await asyncio.to_thread(store.delete, session_id)
+        except KeyError as exc:
+            raise HTTPException(404, "no such session") from exc
+        return {"deleted": session_id}
+
     @app.get("/api/profile/prompt")
     async def profile_prompt():
         from ..assistant import profile as prof
@@ -259,7 +306,9 @@ def _options(cfg: Config) -> dict:
         "devices": devices,
         "defaults": {"model": cfg.asr.model, "source": cfg.audio.source,
                      "mic_device": cfg.audio.mic_device,
-                     "save_transcript": cfg.storage.save_transcripts},
+                     "save_transcript": cfg.storage.save_sessions,
+                     "save_sessions": cfg.storage.save_sessions,
+                     "save_audio": cfg.storage.save_audio},
     }
 
 

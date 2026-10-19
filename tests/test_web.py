@@ -30,10 +30,13 @@ def fake_transcriber(cfg, sources, on_event):
                                 config=PipelineConfig(prompt_with_context=False))
 
 
-def make_client():
+def make_client(sessions_dir=None):
     factory = functools.partial(Session, sources_factory=fake_sources,
                                 transcriber_factory=fake_transcriber)
-    return TestClient(create_app(Config(), session_factory=factory))
+    cfg = Config()
+    cfg.storage.save_sessions = sessions_dir is not None
+    cfg.storage.sessions_dir = str(sessions_dir) if sessions_dir else None
+    return TestClient(create_app(cfg, session_factory=factory))
 
 
 def recv_until(ws, pred, limit=500):
@@ -108,3 +111,50 @@ def test_hub_coalesces_partials():
     hub._enqueue({"type": "transcript", "event": {"kind": "final", "source": "mic"}})
     assert "mic" not in hub._pending_partials and hub.queue.qsize() == 1
     loop.close()
+
+
+def test_session_is_saved_listed_loaded_and_deleted(tmp_path):
+    with make_client(tmp_path) as client:
+        session = client.app.state.session
+        client.post("/api/start", json={"title": "Mock", "target": {"company": "Acme",
+                                                                    "role": "Backend"}})
+        assert session.wait_state({"running"}, 10)
+        client.post("/api/assistant/ask", json={"question": "What is a mutex?"})
+        deadline = time.monotonic() + 10
+        while not session.lines and time.monotonic() < deadline:
+            time.sleep(0.05)
+        client.post("/api/stop")
+        assert session.wait_state({"idle"}, 15)
+        (item,) = client.get("/api/sessions").json()["sessions"]
+        assert item["title"] == "Mock" and item["target"]["company"] == "Acme"
+        assert item["questions"] == 1  # the typed question's card was saved
+        assert item["ended"] and set(item["audio"]) == {"mic"}
+        full = client.get(f"/api/sessions/{item['id']}").json()
+        assert full["transcript"] and full["transcript"][0]["text"]
+        assert client.get(f"/api/sessions/{item['id']}/audio/mic").status_code == 200
+        assert client.get("/api/sessions/../etc").status_code == 404
+        assert client.delete(f"/api/sessions/{item['id']}").json()["deleted"] == item["id"]
+        assert client.get("/api/sessions").json()["sessions"] == []
+
+
+def test_saving_can_be_turned_off_per_session(tmp_path):
+    with make_client(tmp_path) as client:
+        session = client.app.state.session
+        client.post("/api/start", json={"save": False})
+        assert session.wait_state({"running"}, 10)
+        client.post("/api/stop")
+        assert session.wait_state({"idle"}, 15)
+        assert client.get("/api/sessions").json()["sessions"] == []
+
+
+def test_audio_off_saves_text_only(tmp_path):
+    with make_client(tmp_path) as client:
+        session = client.app.state.session
+        client.post("/api/start", json={"save_audio": False})
+        assert session.wait_state({"running"}, 10)
+        time.sleep(1.0)
+        client.post("/api/stop")
+        assert session.wait_state({"idle"}, 15)
+        (item,) = client.get("/api/sessions").json()["sessions"]
+        assert item["audio"] == {}
+        assert not list(tmp_path.glob("*/*.wav")) and not list(tmp_path.glob("*/*.m4a"))

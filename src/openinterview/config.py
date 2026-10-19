@@ -45,8 +45,9 @@ class PipelineConfig:
 
 @dataclass
 class StorageConfig:
-    save_transcripts: bool = False
-    transcript_dir: str = "transcripts"
+    save_sessions: bool = True         # each run saved under sessions_dir (text)
+    save_audio: bool = True            # ... plus per-source audio (.m4a)
+    sessions_dir: str | None = None    # default ~/.openinterview/sessions
 
 
 @dataclass

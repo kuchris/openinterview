@@ -354,7 +354,9 @@ def test_assistant_api_endpoints():
     from openinterview.web.server import create_app
 
     prov = FakeProvider()
-    app = create_app(Config(), provider_factory=lambda cfg: prov)
+    cfg = Config()
+    cfg.storage.save_sessions = False
+    app = create_app(cfg, provider_factory=lambda cfg: prov)
     with TestClient(app) as client:
         assert client.get("/api/assistant").json()["enabled"] is False
         st = client.post("/api/assistant", json={"enabled": True, "mode": "immediate"}).json()
@@ -368,3 +370,37 @@ def test_assistant_api_endpoints():
         with client.websocket_connect("/ws") as ws:
             types = [json.loads(ws.receive_text())["type"] for _ in range(3)]
             assert types == ["snapshot", "metrics", "assistant_snapshot"]
+
+
+def test_target_is_added_to_coach_prompt():
+    from openinterview.assistant.providers import coach_prompt
+
+    p = coach_prompt("", {"company": "Acme", "role": "Backend engineer",
+                          "job_description": "We build payment APIs in Python."})
+    assert "Company: Acme" in p and "Role: Backend engineer" in p and "payment APIs" in p
+    assert "never guess" in p
+    assert "Company:" not in coach_prompt("", {})
+
+
+def test_new_session_clears_cards_and_sets_provider_context():
+    class CtxProvider(FakeProvider):
+        def __init__(self):
+            super().__init__()
+            self.contexts = []
+
+        def set_context(self, profile_text, target):
+            self.contexts.append(target)
+
+    prov = CtxProvider()
+    a, msgs = make_assistant(prov)
+    a.on_message(status("system"))
+    a.on_message(utterance("system", "How does Python manage memory?"))
+    assert wait_for(lambda: len(a.cards) == 1)
+    a.on_message({"type": "status", "state": "loading", "source": "system",
+                  "target": {"company": "Acme"}})
+    assert not a.cards and a.target == {"company": "Acme"}
+    assert wait_for(lambda: prov.contexts == [{"company": "Acme"}])
+    assert msgs[-1]["type"] == "assistant_snapshot" and msgs[-1]["cards"] == []
+    # the same question in the new session is asked again (fresh duplicate memory)
+    a.on_message(utterance("system", "How does Python manage memory?"))
+    assert wait_for(lambda: len(a.cards) == 1)

@@ -91,7 +91,7 @@ function renderStatus() {
   btn.textContent = running || s.state === "loading" ? "Stop" : s.state === "stopping" ? "Stopping…" : "Start";
   btn.classList.toggle("stop", running || s.state === "loading");
   btn.disabled = s.state === "stopping";
-  for (const id of ["source", "model", "mic", "save"]) $(id).disabled = running || busy;
+  for (const id of ["source", "model", "mic", "save", "saveAudio"]) $(id).disabled = running || busy;
   $("error").hidden = !s.error;
   $("error").textContent = s.error || "";
 }
@@ -203,7 +203,8 @@ async function loadOptions() {
   $("mic").replaceChildren(...mics);
   $("mic").value = o.defaults.mic_device || "";
   $("source").value = o.defaults.source;
-  $("save").checked = !!o.defaults.save_transcript;
+  $("save").checked = !!o.defaults.save_sessions;
+  $("saveAudio").checked = !!o.defaults.save_audio;
   syncMicVisibility();
 }
 
@@ -224,7 +225,8 @@ $("controls").addEventListener("submit", (e) => {
   const s = state.status.state;
   if (s === "running" || s === "loading") return post("/api/stop");
   return post("/api/start", { source: $("source").value, model: $("model").value,
-                              mic_device: $("mic").value || null, save_transcript: $("save").checked });
+                              mic_device: $("mic").value || null, save: $("save").checked,
+                              save_audio: $("save").checked && $("saveAudio").checked });
 });
 $("source").addEventListener("change", syncMicVisibility);
 $("transcript").addEventListener("scroll", () => {

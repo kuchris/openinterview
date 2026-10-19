@@ -57,11 +57,30 @@ ANSWER_RULES = (
 )
 
 
-def coach_prompt(profile: str = "") -> str:
-    """The coach's system prompt, with the candidate's profile appended if they have one."""
+def target_text(target: dict | None) -> str:
+    """The interview this session is for (company, role, job description excerpt)."""
+    if not target:
+        return ""
+    parts = []
+    if target.get("company"):
+        parts.append(f"Company: {target['company']}")
+    if target.get("role"):
+        parts.append(f"Role: {target['role']}")
+    if target.get("job_description"):
+        parts.append("Job description:\n" + target["job_description"].strip()[:4000])
+    if not parts:
+        return ""
+    return ("\n\nThis interview (tailor answers to it: stress the experience, skills and "
+            "motivations that match; use only facts stated here about the company, never "
+            "guess others):\n<<<\n" + "\n".join(parts) + "\n>>>")
+
+
+def coach_prompt(profile: str = "", target: dict | None = None) -> str:
+    """The coach's system prompt, with the candidate's profile and this interview's target
+    appended when present."""
     if not profile.strip():
-        return COACH_PROMPT
-    return (COACH_PROMPT + "\n\nCandidate profile (facts about the person you are coaching; "
+        return COACH_PROMPT + target_text(target)
+    return (COACH_PROMPT + target_text(target) + "\n\nCandidate profile (facts about the person you are coaching; "
             "the only source of truth about them):\n<<<\n" + profile.strip() + "\n>>>\n"
             "Rules for using the profile: state only facts that are written in it, without "
             "embellishing (no added motives, feelings, anecdotes or numbers). If the profile "
@@ -258,6 +277,7 @@ class OpenCodeProvider:
         self.http = _HTTP(base_url, timeout)
         self.model = model  # "providerID/modelID"; None = OpenCode's configured default
         self.profile = profile
+        self.target: dict = {}
         # An empty scratch directory: OpenCode treats it as the project root, and loads the
         # coach agent from its opencode.json.
         self.directory = directory or tempfile.mkdtemp(prefix="openinterview-opencode-")
@@ -265,10 +285,15 @@ class OpenCodeProvider:
         self.session_id: str | None = None
 
     def set_profile(self, profile: str) -> None:
-        """Use a new profile. OpenCode caches a directory's config, so start a fresh
-        directory and session (the old session is deleted)."""
+        self.set_context(profile, self.target)
+
+    def set_context(self, profile: str, target: dict | None = None) -> None:
+        """Use a new profile / interview target with a fresh conversation. OpenCode caches a
+        directory's config, so this starts a new directory and session (the old session is
+        deleted)."""
         self.close()
         self.profile = profile
+        self.target = dict(target or {})
         self.directory = tempfile.mkdtemp(prefix="openinterview-opencode-")
         self._write_agent_config()
 
@@ -278,7 +303,8 @@ class OpenCodeProvider:
         config = {"$schema": "https://opencode.ai/config.json", "agent": {
             self.AGENT: {
                 "description": "Concise interview coach (OpenInterview)",
-                "mode": "primary", "prompt": coach_prompt(self.profile), "temperature": 0.3,
+                "mode": "primary", "prompt": coach_prompt(self.profile, self.target),
+                "temperature": 0.3,
                 "tools": {"*": False},
             },
             self.BUILDER: {
@@ -387,10 +413,15 @@ class OpenAICompatibleProvider:
         self.model = model
         self.api_key = api_key
         self.profile = profile
+        self.target: dict = {}
         self.history: list[dict] = []  # conversation context across questions
 
     def set_profile(self, profile: str) -> None:
+        self.set_context(profile, self.target)
+
+    def set_context(self, profile: str, target: dict | None = None) -> None:
         self.profile = profile
+        self.target = dict(target or {})
         self.history = []
 
     def _headers(self) -> dict:
@@ -404,7 +435,8 @@ class OpenAICompatibleProvider:
             return False, str(exc)
 
     def _chat(self, text: str, schema: dict) -> dict:
-        messages = [{"role": "system", "content": coach_prompt(self.profile) + "\n" + _rules(schema)},
+        messages = [{"role": "system",
+                     "content": coach_prompt(self.profile, self.target) + "\n" + _rules(schema)},
                     *self.history[-8:], {"role": "user", "content": text}]
         r = self.http.request("POST", "/chat/completions", {
             "model": self.model, "messages": messages, "temperature": 0.2,
