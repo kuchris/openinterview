@@ -188,3 +188,60 @@ def test_pdf_uses_pdfkit_helper_when_available(tmp_path):
                    check=True)
     text = prof.extract_pdf(pdf)
     assert "Software Engineering Intern" in text and prof.glued_words(text) == 0
+
+
+# -- external assistant (ChatGPT / Claude) round trip ------------------------------------
+
+def make_imported_profile(folder):
+    dest = folder / "profile.md"
+    prof.write_generated(dest, "## About me\n- Name: Alex Chan\n\n## Weaknesses\n- [to add]",
+                         ["Which role are you targeting?", "What is a real weakness?"], "cv.pdf")
+    prof.save_cv_text("Alex Chan, intern at Octopus Cards", folder)
+    return dest
+
+
+def test_external_prompt_contains_materials_rules_and_gaps(tmp_path):
+    dest = make_imported_profile(tmp_path)
+    assert prof.open_questions(dest) == ["Which role are you targeting?", "What is a real weakness?"]
+    p = prof.external_prompt(dest)
+    assert "intern at Octopus Cards" in p                 # CV text
+    assert "- Name: Alex Chan" in p                        # current profile
+    assert "- What is a real weakness?" in p               # open questions
+    assert "ONE question at a time" in p and "Never" in p  # interview + no-invention rules
+    assert all(f"## {s}" in p for s in prof.SECTIONS)      # output format
+    assert "<!--" not in p.split("# My current profile")[1].split("# My CV")[0]
+
+
+def test_extract_markdown_takes_the_fenced_block():
+    reply = "Here is your profile:\n```markdown\n## About me\n- Alex\n```\nGood luck!"
+    assert prof.extract_markdown(reply) == "## About me\n- Alex"
+    assert prof.extract_markdown("## About me\n- Alex") == "## About me\n- Alex"
+
+
+def test_paste_profile_backs_up_and_reports(tmp_path):
+    dest = make_imported_profile(tmp_path)
+    old = dest.read_text()
+    reply = "```markdown\n" + "\n\n".join(f"## {s}\n- x" for s in prof.SECTIONS[:-1]) + "\n```"
+    r = prof.paste_profile(reply, dest)
+    assert (tmp_path / "profile.backup.md").read_text() == old
+    assert r["sections"] == len(prof.SECTIONS) - 1 and r["missing_sections"] == ["Stories (STAR)"]
+    assert "## Strengths\n- x" in prof.load(dest)
+
+
+def test_paste_rejects_non_profile_text(tmp_path):
+    dest = make_imported_profile(tmp_path)
+    before = dest.read_text()
+    with pytest.raises(ValueError, match="doesn't look like a profile"):
+        prof.paste_profile("Sure! What role are you targeting?", dest)
+    assert dest.read_text() == before
+
+
+def test_prompt_and_paste_api(tmp_path):
+    make_imported_profile(tmp_path)
+    with make_client(tmp_path, FakeBuilder()) as client:
+        p = client.get("/api/profile/prompt").json()["prompt"]
+        assert "Alex Chan" in p
+        reply = "```markdown\n## About me\n- Alex\n\n## Skills\n- Python\n\n## Weaknesses\n- [to add]\n```"
+        r = client.post("/api/profile/paste", json={"text": reply}).json()
+        assert r["loaded"] and r["sections"] == 3 and r["to_add"] == 1
+        assert client.post("/api/profile/paste", json={"text": "hello"}).status_code == 400

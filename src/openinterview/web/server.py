@@ -16,6 +16,8 @@ HTTP
   POST /api/profile/import {"path": cv file}    import a CV (PDF, Word, RTF, Pages, text)
   POST /api/profile/edit   create the template if needed; returns the path to open
   POST /api/profile/reload re-read the profile after editing
+  GET  /api/profile/prompt prompt to finish the profile in ChatGPT / Claude
+  POST /api/profile/paste  {"text": reply}     replace the profile with the model's result
 WebSocket /ws
   server -> client: the Session messages (status, source, transcript, metrics) plus a
   "snapshot" on connect. Partials are coalesced to at most one per source per 100 ms.
@@ -198,6 +200,23 @@ def create_app(cfg: Config, session_factory=None, provider_factory=make_provider
 
         prof.ensure_template(assistant.profile_path)
         return assistant.profile_info()
+
+    @app.get("/api/profile/prompt")
+    async def profile_prompt():
+        from ..assistant import profile as prof
+
+        return {"prompt": prof.external_prompt(assistant.profile_path)}
+
+    @app.post("/api/profile/paste")
+    async def profile_paste(body: dict = Body(default={})):
+        from ..assistant import profile as prof
+
+        try:
+            result = prof.paste_profile(str(body.get("text", "")), assistant.profile_path)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        info = await asyncio.to_thread(assistant.reload_profile)
+        return {**info, **result}
 
     @app.post("/api/profile/reload")
     async def profile_reload():

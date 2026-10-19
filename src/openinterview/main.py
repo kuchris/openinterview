@@ -5,7 +5,7 @@
   openinterview run [--source mic|system|both] [--model base.en] [--duration S]
   openinterview transcribe-file FILE [--speed 1.0] [--model base.en]
   openinterview app                            native app window (recommended)
-  openinterview profile [show|edit|import CV|path]   personal profile for answers
+  openinterview profile [show|edit|import CV|prompt|paste|path]   personal profile
   openinterview serve [--port 8765]           local web dashboard
 """
 
@@ -358,6 +358,19 @@ def cmd_profile(args: argparse.Namespace, cfg: Config) -> int:
         print(path)
     elif args.action == "path":
         print(path)
+    elif args.action == "prompt":
+        text = prof.external_prompt(path)
+        subprocess.run(["pbcopy"], input=text, text=True)
+        print(f"copied a {len(text)}-character prompt to the clipboard: paste it into "
+              "ChatGPT or Claude, answer its questions, then run `openinterview profile paste`.")
+    elif args.action == "paste":
+        reply = subprocess.run(["pbpaste"], capture_output=True, text=True).stdout
+        result = prof.paste_profile(reply, path)
+        print(f"profile updated ({result['sections']} sections, {result['to_add']} [to add] left)")
+        if result["missing_sections"]:
+            print("missing sections: " + ", ".join(result["missing_sections"]))
+        if result["backup"]:
+            print(f"previous version saved as {result['backup']}")
     else:
         info = prof.info(path)
         print(json.dumps(info, indent=2))
@@ -410,7 +423,8 @@ def build_parser() -> argparse.ArgumentParser:
         .set_defaults(func=cmd_app)
 
     pr = sub.add_parser("profile", help="your profile / CV for personalised answers")
-    pr.add_argument("action", nargs="?", default="show", choices=["show", "edit", "import", "path"])
+    pr.add_argument("action", nargs="?", default="show",
+                    choices=["show", "edit", "import", "prompt", "paste", "path"])
     pr.add_argument("file", nargs="?", help="CV file for `import` (PDF, Word, RTF, Pages, text)")
     pr.set_defaults(func=cmd_profile)
 

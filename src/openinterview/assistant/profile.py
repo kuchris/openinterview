@@ -182,3 +182,99 @@ def write_generated(dest: Path, markdown: str, to_add: list[str], source_name: s
                 "sections above):\n" + "\n".join(f"- {q}" for q in to_add) + "\n-->")
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(header + markdown.strip() + todo + "\n")
+
+
+# -- working on the profile with an external assistant (ChatGPT, Claude, ...) -------------
+
+SECTIONS = ["About me", "Target role", "Experience", "Projects", "Education", "Skills",
+            "Strengths", "Weaknesses", "Stories (STAR)"]
+
+
+def open_questions(path: Path) -> list[str]:
+    """The 'To complete your profile' questions left by the AI import (in a comment)."""
+    if not path.exists():
+        return []
+    m = re.search(r"<!-- To complete your profile.*?:\n(.*?)-->", path.read_text(errors="replace"),
+                  flags=re.S)
+    if not m:
+        return []
+    return [ln[2:].strip() for ln in m.group(1).splitlines() if ln.startswith("- ")]
+
+
+def external_prompt(path: Path) -> str:
+    """A self-contained prompt to paste into a strong chat model. It interviews you to fill
+    the gaps, then returns the finished profile in this app's format."""
+    current = load(path) or "(empty)"
+    cv_file = path.parent / "cv.txt"
+    cv = cv_file.read_text(errors="replace").strip() if cv_file.exists() else "(no CV imported)"
+    questions = open_questions(path)
+    gaps = "\n".join(f"- {q}" for q in questions) or "- (none listed: find the gaps yourself)"
+    sections = "\n".join(f"## {s}" for s in SECTIONS)
+    return f"""You are an expert interview coach. Help me finish my interview-preparation \
+profile, a document an AI assistant uses to answer interview questions in my voice.
+
+# How to work with me
+1. Read my CV and my current profile below. Then list briefly what is missing or weak \
+(target role, weaknesses, STAR stories without a clear task or result, vague claims).
+2. Interview me to fill those gaps: ask ONE question at a time and wait for my answer. \
+Ask follow-ups until a story has a concrete Situation, Task, Action and Result \
+(numbers if I have them).
+3. When I say "done" (or every gap is filled), output the final profile.
+
+# Rules
+- Facts only: use only what is in my CV, my current profile, or what I tell you. Never \
+invent employers, dates, numbers, motives or outcomes. If something is still unknown, \
+write [to add].
+- Keep my numbers and specifics. Write in first person, plain English, short bullets.
+- Weaknesses must be real and come with what I'm doing about them (no humble-brags).
+- Aim for 3-5 STAR stories that cover: a conflict or disagreement, a mistake or failure, \
+leadership or initiative, a technical challenge, something I'm proud of.
+- At most 900 words in total.
+
+# Output format (final answer only)
+Return the whole profile as ONE Markdown code block (```markdown ... ```), with exactly \
+these sections in this order and nothing outside the code block:
+{sections}
+
+# Questions already noted as gaps
+{gaps}
+
+# My current profile
+<<<
+{current}
+>>>
+
+# My CV (extracted text)
+<<<
+{cv}
+>>>
+"""
+
+
+def extract_markdown(text: str) -> str:
+    """Take the profile out of a chat reply: the (last) ```markdown block if present."""
+    blocks = re.findall(r"```(?:markdown|md)?[ \t]*\n(.*?)```", text, flags=re.S)
+    body = max(blocks, key=len) if blocks else text
+    return body.strip()
+
+
+def paste_profile(text: str, dest: Path) -> dict:
+    """Replace the profile with a pasted one (backing up the old file)."""
+    from datetime import date
+
+    body = extract_markdown(text)
+    headings = re.findall(r"(?m)^## .+", body)
+    if len(headings) < 3:
+        raise ValueError("that doesn't look like a profile (expected Markdown with ## sections). "
+                         "Copy the model's final Markdown block.")
+    backup = None
+    if dest.exists():
+        backup = dest.with_name("profile.backup.md")
+        backup.write_text(dest.read_text(errors="replace"))
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(f"<!-- Pasted on {date.today()} from an external assistant. Check every "
+                    "line; this text is sent to your AI provider with each question. -->\n\n"
+                    + body + "\n")
+    missing = [s for s in SECTIONS if f"## {s}" not in body]
+    return {"sections": len(headings), "missing_sections": missing,
+            "to_add": body.count("[to add]"), "backup": str(backup) if backup else None}

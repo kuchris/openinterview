@@ -227,6 +227,20 @@ Live, on a fictional CV, it took 11 s. Every fact matched the CV, gaps were mark
 on it?". Check the result with **Edit…** and fill in the gaps: the more real stories you
 add, the better behavioural answers get.
 
+**Finish it with ChatGPT or Claude.** ⚙︎ → Your profile → **Copy prompt** (or
+`openinterview profile prompt`) copies a self-contained prompt with your CV text, your
+current profile, the open questions, and strict rules.
+
+The model interviews you one question at a time until every STAR story has a concrete
+situation, task, action and result. It may use only facts you give it, and writes
+`[to add]` for anything still unknown. When you say "done", it returns the finished profile
+as one Markdown block in this app's section format.
+
+Copy that block and click **Paste result** (or `openinterview profile paste`). The previous
+version is kept as `profile.backup.md`. Pasted text without `##` sections is rejected, so a
+stray chat message can't overwrite your profile. Note that the prompt contains your CV:
+paste it only into a service you trust with it.
+
 - **Facts only.** Answers state only facts from your profile. When it doesn't cover what's
   asked (say, no weakness written down), the answer keeps a `[placeholder]` and a key point
   tells you what to add. Nothing is made up. Verified live: without a weakness in the
@@ -467,7 +481,9 @@ Covers:
   fallback, an expired-key error); the OpenAI-compatible provider with history; the
   practice flow (context, spoken-answer capture, feedback, disabled = no requests,
   provider failure isolated); and the API endpoints.
-- **Profile:** template detection, comment stripping, truncation, CV import (text,
+- **Profile:** the external-assistant prompt (materials, rules, gaps, format), Markdown
+  extraction from a chat reply, paste-back with backup and rejection of non-profile text,
+  template detection, comment stripping, truncation, CV import (text,
   Word via textutil, keeping existing notes), prompt injection with the no-invention rule,
   a fresh OpenCode session on profile change, and the API.
 - **Sources:** helper crash restart, device-change restart without backoff, hung-helper

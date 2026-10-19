@@ -284,6 +284,40 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func copyProfilePrompt() {
+        Task {
+            guard let r = await request("GET", "api/profile/prompt"),
+                  let prompt = r["prompt"] as? String else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(prompt, forType: .string)
+            profileToAdd = []
+            profileMessage = "Prompt copied. Paste it into ChatGPT or Claude, answer its questions, " +
+                "then copy its final Markdown block and click Paste result."
+        }
+    }
+
+    func pasteProfileResult() {
+        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
+            profileMessage = "The clipboard is empty: copy the model's final Markdown block first."
+            return
+        }
+        Task {
+            if let r = await request("POST", "api/profile/paste", ["text": text]) {
+                applyProfile(r)
+                let left = r["to_add"] as? Int ?? 0
+                let missing = r["missing_sections"] as? [String] ?? []
+                var msg = "Profile updated from the clipboard (previous version backed up)."
+                if left > 0 { msg += " \(left) [to add] left." }
+                if !missing.isEmpty { msg += " Missing sections: \(missing.joined(separator: ", "))." }
+                profileMessage = msg
+                profileToAdd = []
+            } else {
+                profileMessage = error
+                error = ""
+            }
+        }
+    }
+
     func reloadProfile() {
         Task {
             if let info = await request("POST", "api/profile/reload") {

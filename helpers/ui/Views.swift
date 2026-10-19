@@ -141,6 +141,20 @@ struct SettingsPopover: View {
                     if m.profileBusy { ProgressView().controlSize(.small) }
                 }
                 .disabled(m.profileBusy)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Finish it with ChatGPT or Claude").font(.caption.weight(.semibold))
+                    Text("Copy a prompt with your CV and profile. The model interviews you to fill the gaps, then gives back the finished profile.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        Button {
+                            m.copyProfilePrompt()
+                        } label: { Label("Copy prompt", systemImage: "doc.on.clipboard") }
+                        Button {
+                            m.pasteProfileResult()
+                        } label: { Label("Paste result", systemImage: "arrow.down.doc") }
+                    }
+                }
+                .disabled(m.profileBusy)
                 if !m.profileMessage.isEmpty {
                     Text(m.profileMessage).font(.caption).foregroundStyle(.secondary)
                 }
@@ -153,7 +167,7 @@ struct SettingsPopover: View {
                     }
                     .foregroundStyle(.secondary)
                 }
-                Text("Importing sends your CV to your AI provider (OpenCode) to organise it; the profile is then sent with each question.")
+                Text("Importing sends your CV to your AI provider (OpenCode) to organise it; the profile is then sent with each question. The copied prompt contains your CV, so only paste it into a service you trust with it.")
                     .font(.caption2).foregroundStyle(.tertiary)
             }
         }
