@@ -558,8 +558,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             writeAppIcon(to: path)  // development aid: export the icon and quit
             exit(0)
         }
-        NSApp.applicationIconImage = makeAppIcon()
         NSApp.setActivationPolicy(.regular)
+        // Set the icon after the activation policy (which creates the Dock tile and resets
+        // it), and again once SwiftUI has finished setting up its windows.
+        let icon = makeAppIcon()
+        NSApp.applicationIconImage = icon
+        DispatchQueue.main.async { NSApp.applicationIconImage = icon }
         NSApp.activate(ignoringOtherApps: true)
         // Development aid: render this window to a PNG (no screen-recording permission
         // needed, since it draws only its own view), e.g. for docs or UI checks.
