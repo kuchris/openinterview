@@ -1,6 +1,6 @@
 # OpenInterview
 
-<p align="center"><b>English</b> · <a href="README.zh-Hant.md">繁體中文</a> · <a href="README.ja.md">日本語</a></p>
+<p align="center"><b>English</b> · <a href="README.zh-Hant.md">繁體中文</a> · <a href="README.zh-Hans.md">简体中文</a> · <a href="README.ja.md">日本語</a></p>
 
 ![OpenInterview: the app answering an interview question](docs/images/hero.png)
 

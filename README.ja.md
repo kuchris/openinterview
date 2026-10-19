@@ -1,6 +1,6 @@
 # OpenInterview
 
-<p align="center"><a href="README.md">English</a> · <a href="README.zh-Hant.md">繁體中文</a> · <b>日本語</b></p>
+<p align="center"><a href="README.md">English</a> · <a href="README.zh-Hant.md">繁體中文</a> · <a href="README.zh-Hans.md">简体中文</a> · <b>日本語</b></p>
 
 ![OpenInterview：面接の質問に回答するアプリ](docs/images/hero.png)
 
