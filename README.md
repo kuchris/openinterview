@@ -1,6 +1,8 @@
-<img src="docs/images/icon.png" width="96" alt="OpenInterview icon">
-
 # OpenInterview
+
+**English** · [繁體中文](README.zh-Hant.md) · [日本語](README.ja.md)
+
+![OpenInterview: the app answering an interview question](docs/images/hero.png)
 
 Local, low-latency speech recognition and an AI practice coach for job interviews on
 macOS (Apple Silicon). It transcribes both sides of a call on-device, spots the
