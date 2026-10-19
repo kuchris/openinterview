@@ -4,6 +4,8 @@
 // Usage:
 //   sysaudio capture [--rate 16000]   stream frames until stdin closes or SIGINT/SIGTERM
 //   sysaudio permissions              print microphone authorization status as JSON
+// Exit codes: 0 normal, 1 capture failed to start, 75 default output device changed
+// (the caller should restart the helper so the tap follows the new device).
 //
 // Frame format on stdout (little endian, see helpers/common/common.swift):
 //   uint32 magic 'SAU1' | uint32 sampleCount | uint64 endTimeNanos (CLOCK_UPTIME_RAW,
@@ -247,6 +249,26 @@ func runCapture(rate: Double) -> Int32 {
     let finish: () -> Never = {
         capture.stop()
         exit(0)
+    }
+    // The tap only delivers frames while some app is playing audio, so silence cannot be
+    // told apart from a hang by looking at frames. A heartbeat tells the supervisor we are
+    // alive regardless.
+    let heartbeat = DispatchSource.makeTimerSource(queue: .main)
+    heartbeat.schedule(deadline: .now() + 1, repeating: 1.0)
+    heartbeat.setEventHandler { emit(["event": "heartbeat"]) }
+    heartbeat.resume()
+    // The aggregate device is built around the current default output. When that changes
+    // (AirPods connect, a USB headset is unplugged) exit with 75 so the supervisor in
+    // Python restarts us on the new device.
+    for selector in [kAudioHardwarePropertyDefaultOutputDevice,
+                     kAudioHardwarePropertyDefaultSystemOutputDevice] {
+        var address = globalAddress(selector)
+        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address,
+                                            .main) { _, _ in
+            emit(["event": "device_changed"])
+            capture.stop()
+            exit(75)
+        }
     }
     signal(SIGINT, SIG_IGN)
     signal(SIGTERM, SIG_IGN)

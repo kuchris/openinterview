@@ -35,7 +35,8 @@ def build_transcriber(cfg, sources, on_event):
 
         return AppleStreamingTranscriber(sources, on_event, locale="en-US",
                                          vocabulary=cfg.asr.vocabulary_prompt,
-                                         merge_gap_s=cfg.pipeline.merge_gap_s)
+                                         merge_gap_s=cfg.pipeline.merge_gap_s,
+                                         echo_suppression=cfg.pipeline.echo_suppression)
     from .filters import FilterConfig
     from .segmenter import SegmenterConfig
     from .transcription import PipelineConfig, StreamingTranscriber
@@ -57,6 +58,7 @@ def build_transcriber(cfg, sources, on_event):
         vocabulary_prompt=cfg.asr.vocabulary_prompt,
         prompt_with_context=cfg.asr.prompt_with_context,
         merge_gap_s=p.merge_gap_s,
+        echo_suppression=p.echo_suppression,
     )
     return StreamingTranscriber(
         engine_factory=lambda: make_engine(cfg.asr.model, cfg.asr.language),

@@ -26,6 +26,7 @@ import numpy as np
 from ..audio.source import AudioSource
 from ..metrics import RollingStat
 from .agreement import LocalAgreement
+from .echo import EchoGate, EchoTextFilter
 from .engine import ASREngine
 from .filters import DuplicateSuppressor, FilterConfig, clean_result
 from .scheduler import Job, JobScheduler
@@ -37,7 +38,7 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class TranscriptEvent:
-    kind: str            # "partial" | "final" | "utterance"
+    kind: str            # "partial" | "final" | "utterance" | "retract" (remove a mic final as echo)
     source: str          # "mic" | "system"
     segment_id: int      # -1 for utterances
     text: str            # full text (partial: stable + unstable)
@@ -64,6 +65,7 @@ class PipelineConfig:
     vocabulary_prompt: str = ""      # domain terms that bias decoding (e.g. "Kubernetes, gRPC")
     prompt_with_context: bool = True  # also prompt with the tail of the previous final
     merge_gap_s: float = 1.2
+    echo_suppression: bool = True    # only active when both "mic" and "system" run
 
 
 class _SourceState:
@@ -112,7 +114,11 @@ class StreamingTranscriber:
         self.segmentation = RollingStat()    # end of speech -> final job enqueued
         self.rtf = RollingStat()
         self.counters = {"lost_samples": 0, "segments": 0, "forced_cuts": 0,
-                         "filtered": 0, "duplicates": 0, "partials": 0, "finals": 0}
+                         "filtered": 0, "duplicates": 0, "partials": 0, "finals": 0,
+                         "echo_gated": 0, "echo_text_dropped": 0, "echo_retracted": 0}
+        dual = {"mic", "system"} <= set(self.sources)
+        self.echo_gate = EchoGate() if (dual and self.cfg.echo_suppression) else None
+        self.echo_text = EchoTextFilter() if (dual and self.cfg.echo_suppression) else None
 
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
@@ -222,6 +228,15 @@ class StreamingTranscriber:
         if res.samples.size == 0:
             return
         now = time.monotonic()
+        start_time = buf.time_at(res.start_index) or now
+        echo = False
+        if self.echo_gate is not None and st.src.name == "mic":
+            echo = self.echo_gate.check_span(res.samples, start_time,
+                                             self.sources["system"].src.buffer).echo
+            if echo:
+                self.counters["echo_gated"] += 1
+                if action.kind == "partial":
+                    return
         speech_end_time = buf.time_at(action.speech_end) or now
         if action.kind == "final":
             self.counters["segments"] += 1
@@ -234,7 +249,7 @@ class StreamingTranscriber:
             audio=res.samples,
             start=res.start_index,
             end=action.end,
-            start_time=buf.time_at(res.start_index) or now,
+            start_time=start_time,
             end_time=buf.time_at(action.end) or now,
             onset_time=buf.time_at(action.onset) or now,
             speech_end_time=speech_end_time,
@@ -242,6 +257,7 @@ class StreamingTranscriber:
                                          self.cfg.segmenter.threshold),
             enqueued_at=now,
             forced=action.forced,
+            echo=echo,
         ))
 
     # -- inference thread --------------------------------------------------------------
@@ -285,6 +301,11 @@ class StreamingTranscriber:
         return round(t - self.session_start, 2)
 
     def _process(self, engine: ASREngine, job: Job) -> None:
+        if job.echo:  # speaker playback picked up by the mic: clear its partial, skip ASR
+            self._agreements.pop((job.source, job.segment_id), None)
+            self.on_event(TranscriptEvent("final", job.source, job.segment_id, "",
+                                          self._rel(job.start_time), self._rel(job.end_time)))
+            return
         started = time.monotonic()
         self.queue_wait.add(started - job.enqueued_at)
         result = engine.transcribe(job.audio, prompt=self._prompt(job.source))
@@ -327,6 +348,15 @@ class StreamingTranscriber:
             self.counters["duplicates"] += 1
             self.on_event(TranscriptEvent("final", job.source, job.segment_id, "", start, end))
             return
+        if self.echo_text is not None:
+            drop, retract = self.echo_text.add(job.source, job.segment_id, text, start, end)
+            for seg_id in retract:
+                self.counters["echo_retracted"] += 1
+                self.on_event(TranscriptEvent("retract", "mic", seg_id, "", start, end))
+            if drop:
+                self.counters["echo_text_dropped"] += 1
+                self.on_event(TranscriptEvent("final", job.source, job.segment_id, "", start, end))
+                return
         self.counters["finals"] += 1
         latency = done - job.speech_end_time
         if not job.forced:  # forced cuts happen mid-speech; not an end-of-speech latency

@@ -22,6 +22,7 @@ from pathlib import Path
 from ..audio.source import AudioSource
 from ..config import PROJECT_ROOT
 from ..metrics import RollingStat
+from .echo import EchoGate, EchoTextFilter
 from .filters import DuplicateSuppressor
 from .sentences import SentenceAssembler
 from .transcription import EventCallback, TranscriptEvent
@@ -39,36 +40,71 @@ def available(path: Path = HELPER_PATH) -> bool:
 
 
 class _Stream:
-    """One helper process per audio source."""
+    """One supervised helper process per audio source.
 
-    def __init__(self, owner: "AppleStreamingTranscriber", src: AudioSource) -> None:
+    If the helper dies mid-session (crash, killed, system service hiccup), it is relaunched
+    with backoff. Audio continues from the live position, and any volatile text that was on
+    screen is cleared, since that hypothesis died with the process.
+    """
+
+    def __init__(self, owner: "AppleStreamingTranscriber", src: AudioSource,
+                 command: list[str] | None = None) -> None:
         self.owner = owner
         self.src = src
+        self.command = command  # override for tests
         self.proc: subprocess.Popen | None = None
-        self.ready = threading.Event()
+        self.ready = threading.Event()   # first launch finished (ready or error)
         self.error: str | None = None
         self.segment_id = 0
         self.volatile = ""
         self.helper_rss_mb = 0.0
+        self.restarts = 0
         self.threads: list[threading.Thread] = []
 
     def start(self, args: list[str]) -> None:
-        self.proc = subprocess.Popen([str(HELPER_PATH), "stream", *args], stdin=subprocess.PIPE,
-                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
-        for target, name in ((self._read_results, "results"), (self._pump, "pump")):
-            t = threading.Thread(target=target, name=f"apple-{name}-{self.src.name}", daemon=True)
-            t.start()
-            self.threads.append(t)
+        self.args = args
+        t = threading.Thread(target=self._supervise, name=f"apple-sup-{self.src.name}",
+                             daemon=True)
+        t.start()
+        self.threads.append(t)
 
-    def _pump(self) -> None:
-        """Ring buffer -> helper stdin, in 32 ms frames, as audio arrives."""
+    def _supervise(self) -> None:
+        backoff = 1.0
+        while True:
+            cmd = self.command or [str(HELPER_PATH), "stream", *self.args]
+            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, bufsize=0)
+            self.proc = proc
+            launch_ready = threading.Event()
+            reader = threading.Thread(target=self._read_results, args=(proc, launch_ready),
+                                      name=f"apple-results-{self.src.name}", daemon=True)
+            reader.start()
+            launch_ready.wait(120)
+            self.ready.set()
+            if self.error and self.restarts == 0:
+                proc.kill()
+                return  # fails on first launch: report, don't loop
+            finished = self._pump(proc)
+            reader.join(timeout=30)
+            if finished or self.src.buffer.closed:
+                return
+            # helper died while audio was still flowing
+            self.restarts += 1
+            log.warning("appleasr for %s exited (%s); restarting", self.src.name, proc.poll())
+            self.owner._on_helper_restart(self)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 15.0)
+
+    def _pump(self, proc: subprocess.Popen) -> bool:
+        """Ring buffer -> helper stdin, as audio arrives. True if the source ended normally."""
         buf = self.src.buffer
-        if not self.ready.wait(60):
-            return
         pos = buf.total_written
-        stdin = self.proc.stdin
+        stdin = proc.stdin
+        finished = False
         try:
             while True:
+                if proc.poll() is not None:
+                    return False
                 if not buf.wait_for(pos + FRAME, timeout=0.25):
                     if buf.closed:
                         break
@@ -88,36 +124,45 @@ class _Stream:
             if rest.samples.size:
                 stdin.write(struct.pack("<IIQ", AUDIO, rest.samples.size, rest.start_index)
                             + rest.samples.astype("<f4", copy=False).tobytes())
-        except (BrokenPipeError, ValueError):
-            pass
+            finished = True
+        except (BrokenPipeError, ValueError, OSError):
+            return False
         finally:
             try:
                 stdin.close()  # helper finalizes everything and exits
             except Exception:
                 pass
+        if finished:
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        return finished
 
-    def _read_results(self) -> None:
-        for line in self.proc.stdout:
+    def _read_results(self, proc: subprocess.Popen, launch_ready: threading.Event) -> None:
+        for line in proc.stdout:
             try:
                 msg = json.loads(line)
             except ValueError:
                 continue
             kind = msg.get("type")
             if kind == "ready":
-                self.ready.set()
+                self.error = None
+                launch_ready.set()
             elif kind == "error":
                 self.error = msg.get("message", "appleasr error")
-                self.ready.set()
+                launch_ready.set()
             elif kind == "done":
-                self.helper_rss_mb = msg.get("max_rss_mb", 0.0)
+                self.helper_rss_mb = max(self.helper_rss_mb, msg.get("max_rss_mb", 0.0))
             elif kind == "result":
                 self.owner._on_result(self, msg)
-        self.ready.set()
+        launch_ready.set()
 
 
 class AppleStreamingTranscriber:
     def __init__(self, sources: list[AudioSource], on_event: EventCallback, locale: str = "en-US",
-                 vocabulary: str = "", fast: bool = True, merge_gap_s: float = 1.2) -> None:
+                 vocabulary: str = "", fast: bool = True, merge_gap_s: float = 1.2,
+                 echo_suppression: bool = True) -> None:
         self.on_event = on_event
         self.args = ["--locale", locale] + (["--fast"] if fast else [])
         if vocabulary:
@@ -128,7 +173,13 @@ class AppleStreamingTranscriber:
         self.session_start = time.monotonic()
         self.final_latency = RollingStat()
         self.counters = {"lost_samples": 0, "segments": 0, "forced_cuts": 0, "filtered": 0,
-                         "duplicates": 0, "partials": 0, "finals": 0}
+                         "duplicates": 0, "partials": 0, "finals": 0, "echo_gated": 0,
+                         "echo_text_dropped": 0, "echo_retracted": 0}
+        names = {s.name for s in sources}
+        dual = {"mic", "system"} <= names and echo_suppression
+        self._system_buffer = next((s.buffer for s in sources if s.name == "system"), None)
+        self.echo_gate = EchoGate() if dual else None
+        self.echo_text = EchoTextFilter() if dual else None
         self._lock = threading.Lock()  # results from several helpers share transcript state
         self._dupes = DuplicateSuppressor()
         self._sentences = SentenceAssembler(merge_gap_s)
@@ -160,15 +211,12 @@ class AppleStreamingTranscriber:
     def stop(self, drain: bool = True, timeout: float = 30.0) -> None:
         deadline = time.monotonic() + timeout
         for st in self.streams:
-            st.src.buffer.close()
+            st.src.buffer.close()  # pumps flush, helpers finalize and exit
         for st in self.streams:
             for t in st.threads:
                 t.join(timeout=max(0.1, deadline - time.monotonic()))
-            if st.proc:
-                try:
-                    st.proc.wait(timeout=max(0.1, deadline - time.monotonic()))
-                except subprocess.TimeoutExpired:
-                    st.proc.kill()
+            if st.proc and st.proc.poll() is None:
+                st.proc.kill()
         self._stop.set()
         if self._ticker:
             self._ticker.join(2)
@@ -183,6 +231,7 @@ class AppleStreamingTranscriber:
             "partials_skipped": 0, "degraded": False,
             "final_latency_ms": self.final_latency.summary(),
             "helper_rss_mb": round(sum(st.helper_rss_mb for st in self.streams), 1),
+            "helper_restarts": sum(st.restarts for st in self.streams),
         }
 
     # -- results -----------------------------------------------------------------------
@@ -219,6 +268,26 @@ class AppleStreamingTranscriber:
                 self.on_event(TranscriptEvent("final", st.src.name, seg, "",
                                               self._rel(start_t), self._rel(end_t)))
                 return
+            if self.echo_gate is not None and st.src.name == "mic":
+                lo = int(msg["start"] * SR)
+                audio = buf.read(lo, int(msg["end"] * SR)).samples
+                if self.echo_gate.check_span(audio, start_t, self._system_buffer).echo:
+                    self.counters["echo_gated"] += 1
+                    self.on_event(TranscriptEvent("final", st.src.name, seg, "",
+                                                  self._rel(start_t), self._rel(end_t)))
+                    return
+            if self.echo_text is not None:
+                drop, retract = self.echo_text.add(st.src.name, seg, text, self._rel(start_t),
+                                                   self._rel(end_t))
+                for seg_id in retract:
+                    self.counters["echo_retracted"] += 1
+                    self.on_event(TranscriptEvent("retract", "mic", seg_id, "",
+                                                  self._rel(start_t), self._rel(end_t)))
+                if drop:
+                    self.counters["echo_text_dropped"] += 1
+                    self.on_event(TranscriptEvent("final", st.src.name, seg, "",
+                                                  self._rel(start_t), self._rel(end_t)))
+                    return
             self.counters["finals"] += 1
             latency = now - word_t
             self.final_latency.add(latency)
@@ -227,6 +296,13 @@ class AppleStreamingTranscriber:
             for u in self._sentences.add_final(st.src.name, text, self._rel(start_t),
                                                self._rel(end_t), now):
                 self._emit_utterance(u)
+
+    def _on_helper_restart(self, st: _Stream) -> None:
+        with self._lock:
+            if st.volatile:  # clear the stale partial on screen
+                st.volatile = ""
+                self.on_event(TranscriptEvent("final", st.src.name, st.segment_id, "", 0.0, 0.0))
+                st.segment_id += 1
 
     def _tick_loop(self) -> None:
         while not self._stop.wait(0.1):

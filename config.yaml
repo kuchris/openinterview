@@ -3,6 +3,8 @@
 audio:
   source: mic              # mic | system | both
   mic_device: null         # null = system default; or an index / name substring (see `openinterview devices`)
+  system_backend: auto     # auto (process tap, else BlackHole) | tap | blackhole
+  blackhole_device: BlackHole
   sample_rate: 16000       # ASR rate; capture is resampled to this
   ring_buffer_seconds: 30  # per-source history kept in memory (bounded)
 
@@ -27,6 +29,7 @@ pipeline:
   max_finals: 8
   degrade_at: 2
   merge_gap_s: 1.2         # finals without end punctuation merge into one utterance within this gap
+  echo_suppression: true   # in "both" mode, drop mic speech that is the speakers' system audio
 
 storage:
   save_transcripts: false  # audio is never written to disk

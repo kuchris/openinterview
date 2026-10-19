@@ -16,6 +16,8 @@ DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config.yaml"
 class AudioConfig:
     source: str = "mic"
     mic_device: int | str | None = None
+    system_backend: str = "auto"   # auto | tap | blackhole
+    blackhole_device: str = "BlackHole"
     sample_rate: int = 16000
     ring_buffer_seconds: float = 30.0
 
@@ -38,6 +40,7 @@ class PipelineConfig:
     max_finals: int = 8
     degrade_at: int = 2
     merge_gap_s: float = 1.2
+    echo_suppression: bool = True
 
 
 @dataclass

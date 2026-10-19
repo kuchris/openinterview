@@ -35,6 +35,7 @@ class Job:
     speech_ratio: float
     enqueued_at: float
     forced: bool = False
+    echo: bool = False     # final whose audio the echo gate attributed to the speakers
 
 
 class JobScheduler:

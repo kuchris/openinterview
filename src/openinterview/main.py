@@ -4,6 +4,7 @@
   openinterview devices                  list input devices
   openinterview run [--source mic|system|both] [--model base.en] [--duration S]
   openinterview transcribe-file FILE [--speed 1.0] [--model base.en]
+  openinterview serve [--port 8765]           local web dashboard
 """
 
 from __future__ import annotations
@@ -117,8 +118,14 @@ def cmd_check(args: argparse.Namespace, cfg: Config) -> int:
             report["permissions"] = helper_permissions()
         except Exception as exc:
             report["permissions"] = f"query failed: {exc}"
-    else:
-        problems.append("system audio helper missing: run scripts/build_helper.sh")
+    from .audio.system_audio import BLACKHOLE_SETUP
+
+    tap_ok = helper_available() and report.get("process_tap_supported")
+    report["system_audio_backend"] = ("tap" if tap_ok else
+                                      "blackhole" if report.get("blackhole_installed") else "none")
+    if report["system_audio_backend"] == "none":
+        problems.append("no system audio path: build the helper (scripts/build_helper.sh, "
+                        "macOS 14.2+) or install BlackHole\n" + BLACKHOLE_SETUP)
 
     if args.probe:
         try:
@@ -191,12 +198,15 @@ class TranscriptPrinter:
                 return
             self._clear_partial()
             if ev.kind == "final" and ev.text:
-                print(f"[{ev.start:7.1f}-{ev.end:7.1f}] {who:>4}: {ev.text}"
+                print(f"[{ev.start:7.1f}-{ev.end:7.1f}] {who:>4} #{ev.segment_id}: {ev.text}"
                       f"   ({ev.latency_s * 1000:.0f} ms after speech end,"
                       f" asr {ev.inference_s * 1000:.0f} ms)", flush=True)
+            elif ev.kind == "retract":
+                print(f"  (removed Me #{ev.segment_id}: it was the speakers' echo of Them)",
+                      flush=True)
             elif ev.kind == "utterance" and self.show_utterances:
                 print(f"  => utterance {who}: {ev.text}", flush=True)
-            if self._file and ev.text and ev.kind in ("final", "utterance"):
+            if self._file and (ev.kind == "retract" or (ev.text and ev.kind in ("final", "utterance"))):
                 self._file.write(json.dumps(ev.to_dict()) + "\n")
                 self._file.flush()
 
@@ -263,15 +273,22 @@ def _run_pipeline(cfg: Config, sources: list, duration: float | None,
 def _make_sources(cfg: Config, source: str) -> list:
     from .audio.buffer import AudioRingBuffer
     from .audio.microphone import MicrophoneSource
-    from .audio.system_audio import SystemAudioSource
+    from .audio.microphone import resolve_device, sd
+    from .audio.system_audio import AutoSystemSource
 
     sr, secs = cfg.audio.sample_rate, cfg.audio.ring_buffer_seconds
     sources = []
     if source in ("mic", "both"):
+        idx = resolve_device(cfg.audio.mic_device)
+        name = sd.query_devices(idx if idx is not None else sd.default.device[0])["name"]
+        if "blackhole" in name.lower():
+            raise SystemExit(f"mic device is {name!r}, a loopback device: it would transcribe "
+                             "system audio as 'Me'. Pick a real mic with --device.")
         sources.append(MicrophoneSource(AudioRingBuffer(secs, sr), cfg.audio.mic_device,
                                         on_status=_status))
     if source in ("system", "both"):
-        sources.append(SystemAudioSource(AudioRingBuffer(secs, sr), on_status=_status))
+        sources.append(AutoSystemSource(AudioRingBuffer(secs, sr), cfg.audio.system_backend,
+                                        cfg.audio.blackhole_device, on_status=_status))
     if source == "both":
         print("note: use headphones in 'both' mode, or the mic will re-capture speaker audio",
               file=sys.stderr)
@@ -302,6 +319,13 @@ def cmd_transcribe_file(args: argparse.Namespace, cfg: Config) -> int:
 
 # -- entry -----------------------------------------------------------------------------
 
+def cmd_serve(args: argparse.Namespace, cfg: Config) -> int:
+    from .web.server import serve
+
+    serve(cfg, port=args.port)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="openinterview", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -321,10 +345,15 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("run", help="live transcription")
     r.add_argument("--source", choices=["mic", "system", "both"])
     r.add_argument("--device", help="mic device index or name substring")
+    r.add_argument("--system-backend", choices=["auto", "tap", "blackhole"])
     r.add_argument("--duration", type=float, help="stop after N seconds")
     r.add_argument("--partials", action="store_true", help="print partials even when not a TTY")
     r.add_argument("--utterances", action="store_true", help="print merged utterances")
     r.set_defaults(func=cmd_run)
+
+    w = sub.add_parser("serve", help="local web dashboard (127.0.0.1)")
+    w.add_argument("--port", type=int, default=8765)
+    w.set_defaults(func=cmd_serve)
 
     f = sub.add_parser("transcribe-file", help="replay a file through the live pipeline")
     f.add_argument("file")
@@ -348,6 +377,8 @@ def main(argv: list[str] | None = None) -> int:
         cfg.audio.source = args.source
     if getattr(args, "device", None):
         cfg.audio.mic_device = args.device
+    if getattr(args, "system_backend", None):
+        cfg.audio.system_backend = args.system_backend
     return args.func(args, cfg)
 
 

@@ -6,9 +6,13 @@ Silicon GPU); no audio leaves the machine, and audio is never written to disk.
 
 See [PLAN.md](PLAN.md) for the full design and phase plan.
 
-**Status: Phase 2.** Working so far:
+**Status: Phase 4.** Working so far:
 
-- Mic and system-audio capture.
+- A local web dashboard.
+- Mic and system-audio capture, separately or both at once.
+- A BlackHole fallback when the native system-audio helper can't run.
+- Automatic recovery when helpers crash, hang, or the output device changes.
+- Speaker-echo suppression in "both" mode.
 - Silero VAD segmentation, with live partials (LocalAgreement) and finals.
 - Hallucination and duplicate filtering, plus sentence assembly.
 - Five ASR backends: Whisper ×4, Parakeet, and Apple SpeechAnalyzer.
@@ -38,11 +42,13 @@ For Parakeet, also run `uv sync --extra parakeet`.
 ## Usage
 
 ```bash
+uv run openinterview serve                               # dashboard at http://127.0.0.1:8765
 uv run openinterview check --probe                       # environment + permission report
 uv run openinterview devices                             # list input devices
 uv run openinterview run --source mic                    # live mic transcript (Ctrl-C to stop)
 uv run openinterview run --source mic --device "MacBook Air"
 uv run openinterview run --source system                 # other side of a call
+uv run openinterview run --source system --system-backend blackhole
 uv run openinterview --model base.en run --source both   # use headphones in this mode
 uv run openinterview --model apple run --source system   # Apple on-device streaming ASR
 uv run openinterview transcribe-file talk.wav --speed 1 --utterances  # replay a file live
@@ -91,6 +97,85 @@ so enabling the app you *see* does nothing. In both cases the tap is silently de
   gives no other signal.
 
 After changing the microphone permission, quit and reopen the terminal app.
+
+## Dashboard
+
+```bash
+uv run openinterview serve
+```
+
+Then open <http://127.0.0.1:8765>. The server binds to localhost only.
+
+- **Controls:** source (mic / system / both), model, mic device, an opt-in "Save
+  transcript", and Start/Stop. Controls lock while recording.
+- **Visible recording indicator:** a red pulsing "Recording" badge whenever capture is on.
+- **Status:** per-source state, and the system backend (tap / blackhole). Reconnects and
+  errors show inline; a "degraded" badge appears when partials are paused under load.
+- **Transcript:** finals labelled Me / Them with timestamps. The live partial shows below,
+  with committed words darker and the changing tail grey. Echo retractions remove lines.
+- **Latency panel:** final latency p50/p95, first partial, ASR time per final, RTF, queue
+  depth, dropped finals / echo removals, memory. Updates every second.
+- **Export .md** downloads the in-memory transcript. Audio is never stored. With "Save
+  transcript" on, finals are also appended to `transcripts/<timestamp>.jsonl`.
+
+WebSocket messages (`/ws`): `snapshot`, `status`, `source`, `transcript` (partial / final /
+utterance / retract), `metrics`. Partials are coalesced to one per source per 100 ms.
+
+## System audio backends
+
+| Backend | When | Notes |
+|---|---|---|
+| **Process tap** (`bin/sysaudio`) | default; macOS 14.2+ and helper built | Captures every app's output. Needs no audio routing changes. |
+| **BlackHole** | `auto` fallback, or `--system-backend blackhole` | A virtual loopback device read through PortAudio. Works on older macOS. |
+
+`audio.system_backend: auto` picks the tap. It falls back to BlackHole if the helper is
+missing, the OS is too old, or the tap fails to start within 5 s while BlackHole is
+installed. `openinterview check` shows which backend will be used.
+
+BlackHole setup (only needed for the fallback):
+
+1. `brew install blackhole-2ch`, or install from <https://existential.audio/blackhole/>.
+2. Open **Audio MIDI Setup** → **+** → **Create Multi-Output Device**. Tick your real
+   speakers/headphones *and* "BlackHole 2ch". Put the real device first, and enable drift
+   correction on BlackHole.
+3. Select the Multi-Output Device as the system output, or as the call app's speaker.
+4. Note: the volume keys don't control a Multi-Output Device; set volume per device.
+
+The app refuses to use BlackHole as the *mic* device in `both` mode, since that would
+transcribe the other side twice.
+
+**Recovery.** The tap helper is supervised:
+
+- **Crash, or no heartbeat for 5 s:** restart with backoff (1 → 15 s).
+- **Default output device changes** (AirPods connect, headset unplugged): the helper
+  exits with code 75 and is restarted at once on the new device.
+- **No app playing:** the tap delivers no frames at all; this is normal. When audio
+  resumes, the gap is zero-filled so the system timeline stays aligned with wall-clock time.
+- **Mic / BlackHole streams:** a watchdog reopens them after a 2 s stall. PortAudio resets
+  are shared and rate-limited, so one source's reconnect doesn't kill the other.
+- **`appleasr` exits mid-session:** it is relaunched and continues from the live position.
+
+## Both mode and speaker echo
+
+Mic ("Me") and system ("Them") are separate streams, so there is no digital loopback.
+**Use headphones.** Without them, the mic hears the interviewer through the speakers.
+Two layers remove that echo (`pipeline.echo_suppression`, on by default, active only in
+`both` mode):
+
+1. **Audio gate, before ASR.** For each mic segment, the gate compares the mic's
+   20 ms loudness envelope with the system audio's envelope, at lags of −0.1…0.6 s.
+   - The segment is echo if the correlation is ≥ 0.6 *and* at most 25% of voiced mic frames
+     fall where the system was quiet.
+   - When you talk over or between the interviewer's words, you add energy where the
+     system is silent. That breaks the second condition, so double-talk is kept.
+   - Echo segments are never transcribed, which also saves compute.
+2. **Text match, after ASR.** A mic final whose words match (≥ 60%) a time-overlapping
+   system final is dropped. If the mic final was already shown, a `retract` event removes
+   it.
+
+This is not full acoustic echo cancellation: echo *inside* a genuine double-talk segment
+is kept. In the live test (built-in mic, playback audible in the room), the gate removed
+one mic segment and the text match dropped another, so no duplicate "Me" lines appeared.
 
 ## How it works
 
@@ -209,5 +294,13 @@ Covers:
 - **End-to-end pipeline** with a fake engine and energy VAD: partial→final ordering,
   bounded segments, finals surviving overload.
 - **Apple result mapping.**
+- **Echo:** the envelope gate (echo detected; independent speech and double-talk kept;
+  alignment through ring-buffer timestamps), the text-match drop/retract rules, and
+  end-to-end dual-source runs with and without suppression.
+- **Dashboard:** the HTTP API, WebSocket snapshot/stream/stop/export, conflict and
+  validation errors, late-joining clients, and partial coalescing.
+- **Sources:** helper crash restart, device-change restart without backoff, hung-helper
+  restart, idle-without-frames *not* restarting, idle gap zero-fill, BlackHole fallback
+  selection, setup instructions when no backend exists, shared PortAudio reset.
 - **Helper frame protocol.**
 - **Benchmark WER.**

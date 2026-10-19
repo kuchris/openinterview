@@ -101,6 +101,13 @@ class AudioRingBuffer:
                 return None
             return self._anchor_time - (self._anchor_index - index) / self.sample_rate
 
+    def index_at(self, t: float) -> int | None:
+        """Absolute sample index captured at monotonic time `t` (inverse of time_at)."""
+        with self._cond:
+            if self._anchor_time is None:
+                return None
+            return self._anchor_index - int(round((self._anchor_time - t) * self.sample_rate))
+
     def close(self) -> None:
         with self._cond:
             self._closed = True

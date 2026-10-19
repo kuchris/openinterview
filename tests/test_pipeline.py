@@ -173,3 +173,41 @@ def test_read_frames_parses_helper_protocol():
     assert len(got) == 2
     np.testing.assert_array_equal(got[0][0], payload)
     assert got[0][1] == 2.5
+
+
+# -- dual source echo -----------------------------------------------------------------
+
+def run_dual(echo_suppression: bool):
+    from test_echo import room, speechlike
+
+    system_audio = np.concatenate([speechlike(3.0, 1), silence(1.0)])
+    mic_audio = room(system_audio, 0.12, gain=0.8)  # loud speakers -> room -> mic
+    events = []
+    sys_src = FileSource(AudioRingBuffer(30, SR), system_audio, name="system", speed=1.0,
+                         tail_silence_s=0)
+    mic_src = FileSource(AudioRingBuffer(30, SR), mic_audio, name="mic", speed=1.0,
+                         tail_silence_s=0)
+    cfg = PipelineConfig(prompt_with_context=False, echo_suppression=echo_suppression)
+    pipe = StreamingTranscriber(lambda: FakeEngine(), [mic_src, sys_src], events.append,
+                                vad_factory=lambda: EnergyVAD(0.01), config=cfg)
+    pipe.start()
+    assert pipe.ready.wait(5)
+    sys_src.start()
+    mic_src.start()
+    sys_src.done.wait(10)
+    mic_src.done.wait(10)
+    pipe.stop(drain=True)
+    finals = [e for e in events if e.kind == "final" and e.text]
+    return ([e for e in finals if e.source == "system"],
+            [e for e in finals if e.source == "mic"], pipe)
+
+
+def test_dual_source_mic_echo_is_gated_end_to_end():
+    them, me, pipe = run_dual(echo_suppression=True)
+    assert them and not me
+    assert pipe.counters["echo_gated"] >= 1  # the mic did hear it; the gate removed it
+
+
+def test_dual_source_without_suppression_shows_the_echo():
+    them, me, _ = run_dual(echo_suppression=False)
+    assert them and me  # control: the same input really does produce duplicate "Me" lines

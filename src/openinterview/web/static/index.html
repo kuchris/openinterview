@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenInterview</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true"></span>
+    <h1>OpenInterview</h1>
+    <span id="rec" class="rec off" role="status" aria-live="polite"><span class="dot"></span><span id="rec-label">Not recording</span></span>
+  </div>
+  <form id="controls" class="controls" autocomplete="off">
+    <label>Source
+      <select id="source">
+        <option value="mic">Microphone</option>
+        <option value="system">System audio</option>
+        <option value="both">Mic + system</option>
+      </select>
+    </label>
+    <label>Model <select id="model"></select></label>
+    <label id="mic-wrap">Mic <select id="mic"></select></label>
+    <label class="check"><input type="checkbox" id="save"> Save transcript</label>
+    <button type="submit" id="toggle" class="primary">Start</button>
+  </form>
+</header>
+
+<div id="statusline" class="statusline">
+  <span id="state" class="chip">idle</span>
+  <span id="sources"></span>
+  <span id="degraded" class="chip warn" hidden>degraded: partials paused</span>
+  <span id="error" class="error" hidden></span>
+  <span class="spacer"></span>
+  <span id="conn" class="muted">connecting…</span>
+</div>
+
+<main class="layout">
+  <section class="panel transcript-panel" aria-label="Transcript">
+    <div class="panel-head">
+      <h2>Transcript</h2>
+      <div class="head-actions">
+        <span id="count" class="muted"></span>
+        <a id="export" class="btn" href="/api/transcript.md" download>Export .md</a>
+      </div>
+    </div>
+    <div id="transcript" class="transcript" tabindex="0">
+      <p id="empty" class="empty">Press <b>Start</b> and speak. Finalized sentences appear here; the grey line is the live partial.</p>
+      <ol id="lines" class="lines"></ol>
+      <div id="partials" class="partials" aria-live="off"></div>
+    </div>
+  </section>
+
+  <aside class="side">
+    <section class="panel">
+      <div class="panel-head"><h2>Latency</h2></div>
+      <dl class="metrics" id="metrics">
+        <div><dt>Final after speech end</dt><dd id="m-final">–</dd></div>
+        <div><dt>First partial</dt><dd id="m-first">–</dd></div>
+        <div><dt>ASR per final</dt><dd id="m-asr">–</dd></div>
+        <div><dt>Real-time factor</dt><dd id="m-rtf">–</dd></div>
+        <div><dt>Queue</dt><dd id="m-queue">–</dd></div>
+        <div><dt>Dropped / echo removed</dt><dd id="m-drop">–</dd></div>
+        <div><dt>Memory (RSS / MLX)</dt><dd id="m-mem">–</dd></div>
+      </dl>
+      <p class="hint">p50 over recent segments. Final latency includes the 0.6 s end-of-speech wait.</p>
+    </section>
+
+    <section class="panel" id="assistant-panel" hidden>
+      <div class="panel-head"><h2>Practice assistant</h2><span id="assistant-state" class="chip">off</span></div>
+      <div id="assistant"></div>
+    </section>
+  </aside>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>
