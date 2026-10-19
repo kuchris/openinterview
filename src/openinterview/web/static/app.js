@@ -160,8 +160,21 @@ function onMessage(msg) {
     case "metrics":
       onMetrics(msg);
       break;
+    case "assistant_snapshot":
+      onAssistantState(msg);
+      assistant.cards.clear();
+      for (const c of msg.cards) assistant.cards.set(c.id, c);
+      renderCards();
+      break;
+    case "assistant_state":
+      onAssistantState(msg);
+      break;
+    case "assistant_card":
+      assistant.cards.set(msg.card.id, msg.card);
+      renderCards();
+      break;
     default:
-      if (window.onAssistantMessage) window.onAssistantMessage(msg);
+      break;
   }
 }
 
@@ -217,6 +230,80 @@ $("source").addEventListener("change", syncMicVisibility);
 $("transcript").addEventListener("scroll", () => {
   const t = $("transcript");
   stickToBottom = t.scrollHeight - t.scrollTop - t.clientHeight < 40;
+});
+
+// -- practice assistant ------------------------------------------------------------------
+
+const assistant = { state: {}, cards: new Map(), revealed: new Set() };
+
+function onAssistantState(st) {
+  assistant.state = st;
+  $("as-enabled").checked = !!st.enabled;
+  $("as-mode").value = st.mode || "practice";
+  const h = $("as-health");
+  if (!st.enabled) h.textContent = st.health && st.health !== "not checked" && !st.healthy
+    ? `Off: ${st.health}` : "Off. Answers come from your local OpenCode server; transcription works without it.";
+  else h.textContent = st.healthy ? `On: ${st.health}. Listening to ${st.listen_to.map((s) => SPEAKER[s] || s).join(", ")}.`
+    : `On, but the provider is unreachable: ${st.health}`;
+  h.classList.toggle("error", !!st.enabled && !st.healthy);
+}
+
+function cardEl(c) {
+  const li = el("li", "card");
+  const meta = el("div", "meta");
+  const chip = el("span", `chip ${c.status === "ready" ? "ok" : c.status === "error" ? "bad" : ""}`,
+                  c.status === "thinking" ? "thinking…" : c.status);
+  meta.append(chip, el("span", "muted", c.source === "typed" ? "typed" : `from ${SPEAKER[c.source] || c.source}`));
+  li.append(meta, el("p", "q", c.question));
+  if (c.error) li.append(el("p", "err", c.error));
+  const practice = (assistant.state.mode || "practice") === "practice";
+  const shown = !practice || assistant.revealed.has(c.id);
+  if (practice && !shown && c.status !== "error") {
+    li.append(el("p", "turn", "Your turn: answer out loud, then reveal the reference answer."));
+  }
+  if (c.spoken && c.spoken.length) li.append(el("p", "spoken", `You said: ${c.spoken.join(" ")}`));
+  const actions = el("div", "actions");
+  if (c.status === "ready" && c.answer) {
+    if (shown) {
+      li.append(el("p", "short", c.answer.short_answer));
+      const ul = el("ul");
+      for (const p of c.answer.key_points) ul.append(el("li", "", p));
+      li.append(ul);
+      if (c.answer.python_example) li.append(el("pre", "", c.answer.python_example));
+      if (c.feedback) {
+        if (c.feedback.covered.length) { const u = el("ul", "fb-ok"); c.feedback.covered.forEach((x) => u.append(el("li", "", x))); li.append(u); }
+        if (c.feedback.missed.length) { const u = el("ul", "fb-miss"); c.feedback.missed.forEach((x) => u.append(el("li", "", x))); li.append(u); }
+        if (c.feedback.tip) li.append(el("p", "spoken", `Tip: ${c.feedback.tip}`));
+      } else {
+        const b = el("button", "", c.feedback_status === "thinking" ? "Checking…" : "Check my answer");
+        b.disabled = c.feedback_status === "thinking";
+        b.onclick = () => post(`/api/assistant/${c.id}/grade`);
+        actions.append(b);
+      }
+      if (c.answer.model) li.append(el("p", "hint", `${c.answer.model} · ${c.answer.seconds}s`));
+    } else {
+      const b = el("button", "", "Reveal answer");
+      b.onclick = () => { assistant.revealed.add(c.id); renderCards(); };
+      actions.append(b);
+    }
+  }
+  if (actions.children.length) li.append(actions);
+  return li;
+}
+
+function renderCards() {
+  const cards = [...assistant.cards.values()].sort((a, b) => b.id - a.id);
+  $("as-cards").replaceChildren(...cards.map(cardEl));
+}
+
+$("as-enabled").addEventListener("change", (e) => post("/api/assistant", { enabled: e.target.checked }));
+$("as-mode").addEventListener("change", (e) => post("/api/assistant", { mode: e.target.value }).then(renderCards));
+$("as-ask").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const q = $("as-question").value.trim();
+  if (!q) return;
+  post("/api/assistant/ask", { question: q });
+  $("as-question").value = "";
 });
 
 loadOptions().catch((e) => { $("error").hidden = false; $("error").textContent = String(e); });

@@ -50,11 +50,26 @@ class StorageConfig:
 
 
 @dataclass
+class AssistantConfig:
+    enabled: bool = False
+    provider: str = "opencode"           # opencode | openai
+    base_url: str = "http://127.0.0.1:4096"
+    model: str | None = None             # opencode: "providerID/modelID"; openai: model name
+    api_key_env: str = "OPENAI_API_KEY"  # openai provider only; key read from this env var
+    mode: str = "practice"               # practice | immediate
+    listen_to: list[str] = field(default_factory=lambda: ["system"])
+    require_technical: bool = True
+    timeout_s: float = 60.0
+    max_cards: int = 50
+
+
+@dataclass
 class Config:
     audio: AudioConfig = field(default_factory=AudioConfig)
     asr: ASRConfig = field(default_factory=ASRConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
+    assistant: AssistantConfig = field(default_factory=AssistantConfig)
 
 
 def _apply(obj: Any, data: dict[str, Any]) -> None:

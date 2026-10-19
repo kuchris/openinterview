@@ -127,6 +127,17 @@ def cmd_check(args: argparse.Namespace, cfg: Config) -> int:
         problems.append("no system audio path: build the helper (scripts/build_helper.sh, "
                         "macOS 14.2+) or install BlackHole\n" + BLACKHOLE_SETUP)
 
+    a = cfg.assistant
+    try:
+        from .assistant.practice import make_provider
+
+        ok, detail = make_provider(a).health()
+        report["assistant"] = {"enabled": a.enabled, "provider": a.provider,
+                               "reachable": ok, "detail": detail}
+    except Exception as exc:
+        report["assistant"] = {"enabled": a.enabled, "provider": a.provider,
+                               "reachable": False, "detail": str(exc)}
+
     if args.probe:
         try:
             report["mic_probe"] = _probe_mic()

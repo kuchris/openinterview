@@ -138,3 +138,27 @@ button:disabled { opacity: 0.6; cursor: progress; }
   .bar, .statusline { padding-left: 16px; padding-right: 16px; }
   .line, .partial { grid-template-columns: 42px 44px minmax(0, 1fr); }
 }
+
+/* -- practice assistant -------------------------------------------------------------- */
+.switch { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted);
+          cursor: pointer; }
+.as-row select { width: 100%; }
+.as-ask { display: flex; gap: 6px; margin-top: 10px; }
+.as-ask input { flex: 1; min-width: 0; font: inherit; font-size: 14px; color: var(--text);
+                background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+                padding: 6px 10px; }
+.cards { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 10px; }
+.card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.card .q { font-weight: 600; margin: 0 0 6px; }
+.card .meta { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.card .turn { color: var(--muted); font-size: 13px; margin: 4px 0; }
+.card .spoken { font-size: 13px; color: var(--muted); margin: 6px 0; }
+.card .short { margin: 8px 0 6px; }
+.card ul { margin: 4px 0 8px; padding-left: 18px; font-size: 14px; }
+.card pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+            padding: 8px; overflow-x: auto; font-size: 12.5px; margin: 6px 0; }
+.card .actions { display: flex; gap: 6px; margin-top: 6px; }
+.card .actions button { font-size: 13px; padding: 4px 10px; }
+.card .err { color: var(--error); font-size: 13px; margin: 4px 0; }
+.fb-ok li::marker { content: "✓  "; color: var(--me); }
+.fb-miss li::marker { content: "✗  "; color: var(--error); }

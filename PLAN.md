@@ -325,3 +325,12 @@ and what could not be tested in this environment.
     (README "Benchmarks").
   - Added a "partial lag" metric for the Whisper and Parakeet pipelines. The Apple backend
     cannot report it, because its volatile results have no per-word timing.
+- **Phase 3**
+  - The process tap delivers *no frames* while no app plays audio. Stall detection uses a
+    helper heartbeat instead, and idle gaps are zero-filled to keep the timeline aligned.
+  - Starting a tap blocks while macOS shows the permission dialog. The supervisor waits
+    up to 60 s instead of restarting.
+- **Phase 5**
+  - OpenCode is driven through its documented session API, with deny-all permissions, the
+    `plan` agent and an empty working directory. Answers come back as structured output
+    (`json_schema`).

@@ -8,6 +8,10 @@ HTTP
   POST /api/start          {"source", "model", "mic_device", "save_transcript"}
   POST /api/stop
   GET  /api/transcript.md  export the in-memory transcript
+  GET  /api/assistant      practice assistant state + cards
+  POST /api/assistant      {"enabled"?: bool, "mode"?: "practice"|"immediate"}
+  POST /api/assistant/ask  {"question": str}   ask a typed question
+  POST /api/assistant/{id}/grade               feedback on your spoken answer
 WebSocket /ws
   server -> client: the Session messages (status, source, transcript, metrics) plus a
   "snapshot" on connect. Partials are coalesced to at most one per source per 100 ms.
@@ -26,6 +30,7 @@ from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
+from ..assistant.practice import PracticeAssistant, make_provider
 from ..config import Config
 from ..session import Session
 
@@ -90,9 +95,11 @@ class Hub:
             self.clients.discard(ws)
 
 
-def create_app(cfg: Config, session_factory=None) -> FastAPI:
+def create_app(cfg: Config, session_factory=None, provider_factory=make_provider) -> FastAPI:
     hub = Hub()
     session: Session = (session_factory or Session)(cfg, hub.sink)
+    assistant = PracticeAssistant(cfg.assistant, hub.sink, provider_factory)
+    session.listeners.append(assistant.on_message)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -101,11 +108,13 @@ def create_app(cfg: Config, session_factory=None) -> FastAPI:
         yield
         session.stop()
         session.wait_state({"idle", "error"}, timeout=25)
+        assistant.close()
         task.cancel()
 
     app = FastAPI(title="OpenInterview", lifespan=lifespan)
     app.state.session = session
     app.state.hub = hub
+    app.state.assistant = assistant
 
     @app.get("/")
     async def index():
@@ -137,11 +146,44 @@ def create_app(cfg: Config, session_factory=None) -> FastAPI:
         return PlainTextResponse(session.export_markdown(), headers={
             "Content-Disposition": 'attachment; filename="transcript.md"'})
 
+    @app.get("/api/assistant")
+    async def assistant_get():
+        return assistant.snapshot()
+
+    @app.post("/api/assistant")
+    async def assistant_set(body: dict = Body(default={})):
+        try:
+            if "mode" in body:
+                assistant.set_mode(body["mode"])
+            if "enabled" in body:
+                # health check does network I/O: keep it off the event loop
+                await asyncio.to_thread(assistant.set_enabled, bool(body["enabled"]))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return assistant.state()
+
+    @app.post("/api/assistant/ask")
+    async def assistant_ask(body: dict = Body(default={})):
+        try:
+            return assistant.ask(str(body.get("question", "")))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/api/assistant/{card_id}/grade")
+    async def assistant_grade(card_id: int):
+        try:
+            assistant.grade(card_id)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return {"ok": True}
+
     @app.websocket("/ws")
     async def ws(websocket: WebSocket):
         await websocket.accept()
         await websocket.send_text(json.dumps({"type": "snapshot", **session.snapshot()}))
         await websocket.send_text(json.dumps({"type": "metrics", **session.metrics()}))
+        await websocket.send_text(json.dumps({"type": "assistant_snapshot",
+                                              **assistant.snapshot()}))
         hub.clients.add(websocket)
         try:
             while True:

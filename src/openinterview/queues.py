@@ -50,6 +50,10 @@ class DropOldestQueue(Generic[T]):
             self._closed = True
             self._cond.notify_all()
 
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
     def __len__(self) -> int:
         with self._cond:
             return len(self._items)

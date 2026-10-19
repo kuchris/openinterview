@@ -6,8 +6,9 @@ Silicon GPU); no audio leaves the machine, and audio is never written to disk.
 
 See [PLAN.md](PLAN.md) for the full design and phase plan.
 
-**Status: Phase 4.** Working so far:
+**Status: all five phases implemented.** Working so far:
 
+- An optional practice assistant (OpenCode), disabled by default.
 - A local web dashboard.
 - Mic and system-audio capture, separately or both at once.
 - A BlackHole fallback when the native system-audio helper can't run.
@@ -120,6 +121,67 @@ Then open <http://127.0.0.1:8765>. The server binds to localhost only.
 
 WebSocket messages (`/ws`): `snapshot`, `status`, `source`, `transcript` (partial / final /
 utterance / retract), `metrics`. Partials are coalesced to one per source per 100 ms.
+
+## Practice assistant (optional, OpenCode)
+
+The assistant is disabled by default, and transcription never depends on it. When on, it
+turns the interviewer's complete questions into practice cards:
+
+1. A **complete utterance** from "Them" becomes a card if it looks like a technical
+   question. Utterances are merged finals; partials and fragments are never sent. A
+   question needs:
+   - a question form (`?`, "how would you…", "explain…", "walk me through…");
+   - at least 4 words;
+   - a technical cue, so small talk is ignored.
+
+   Near-duplicates (≥ 85% similar to a recent question) are skipped. At most one request is
+   in flight; the small backlog drops its oldest entry.
+2. **Practice mode (default):** the card says *"Your turn: answer out loud"*. Your mic
+   utterances are attached to the card. Then click **Reveal answer** to see:
+   - a short English answer;
+   - 3–5 key technical points;
+   - an optional Python example.
+
+   **Check my answer** asks the model which key points you covered and which you missed.
+   **Immediate mode** shows answers right away (for meeting notes).
+3. **Context:** one OpenCode session is kept per run, so follow-ups ("and its time
+   complexity?") keep context. Recent transcript lines are also included with each
+   question.
+
+You can also type a question in the panel.
+
+### Setup
+
+```bash
+mkdir -p ~/opencode-scratch && cd ~/opencode-scratch   # an empty folder
+opencode serve --port 4096
+```
+
+Then toggle **Practice assistant → On** in the dashboard, or set `assistant.enabled: true`.
+`openinterview check` shows whether the server is reachable.
+
+How it talks to OpenCode: the documented server API, verified against OpenCode 1.19.3's
+`/doc` OpenAPI spec.
+
+- `POST /session?directory=<empty temp dir>` creates the session, with
+  `permission: [{"permission": "*", "pattern": "*", "action": "deny"}]`.
+- `POST /session/{id}/message` sends each question, with `agent: "plan"`, a coaching
+  `system` prompt, and `format: {"type": "json_schema", ...}`. The answer is read from
+  `info.structured`, with a fallback to JSON in the text part.
+- **Safety:** every tool permission is denied, the agent is read-only, and the working
+  directory is empty. The model can answer, but cannot read or change files or run commands.
+- **Model:** `assistant.model` picks one as `"providerID/modelID"`. `null` uses OpenCode's
+  default.
+- **Errors** (server down, expired key, timeout) show on the card; transcription keeps
+  running. Verified live: with an expired OpenCode Go key, the card showed OpenCode's
+  "This API key has expired…" message.
+
+Alternative: `assistant.provider: openai` with `base_url` pointing at any OpenAI-compatible
+`/v1` server (for example a local model server). The key is read from the environment
+variable named in `assistant.api_key_env`, never from the config file.
+
+Scope: this is a practice tool. No hidden overlays, no concealed recording, no
+screen-share evasion. The recording indicator is always visible.
 
 ## System audio backends
 
@@ -299,6 +361,12 @@ Covers:
   end-to-end dual-source runs with and without suppression.
 - **Dashboard:** the HTTP API, WebSocket snapshot/stream/stop/export, conflict and
   validation errors, late-joining clients, and partial coalescing.
+- **Assistant:** question detection (technical questions vs small talk, statements, short
+  fragments, near-duplicates); the OpenCode request shape against a mock server
+  (deny-all permissions, plan agent, json_schema, model id, a reused session, text-JSON
+  fallback, an expired-key error); the OpenAI-compatible provider with history; the
+  practice flow (context, spoken-answer capture, feedback, disabled = no requests,
+  provider failure isolated); and the API endpoints.
 - **Sources:** helper crash restart, device-change restart without backoff, hung-helper
   restart, idle-without-frames *not* restarting, idle gap zero-fill, BlackHole fallback
   selection, setup instructions when no backend exists, shared PortAudio reset.

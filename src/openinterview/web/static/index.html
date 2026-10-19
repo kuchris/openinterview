@@ -68,9 +68,23 @@
       <p class="hint">p50 over recent segments. Final latency includes the 0.6 s end-of-speech wait.</p>
     </section>
 
-    <section class="panel" id="assistant-panel" hidden>
-      <div class="panel-head"><h2>Practice assistant</h2><span id="assistant-state" class="chip">off</span></div>
-      <div id="assistant"></div>
+    <section class="panel" id="assistant-panel">
+      <div class="panel-head">
+        <h2>Practice assistant</h2>
+        <label class="switch"><input type="checkbox" id="as-enabled"> On</label>
+      </div>
+      <div class="as-row">
+        <select id="as-mode" aria-label="Assistant mode">
+          <option value="practice">Practice: reveal after I answer</option>
+          <option value="immediate">Immediate: show answers</option>
+        </select>
+      </div>
+      <p id="as-health" class="hint">Off. Answers come from your local OpenCode server; transcription works without it.</p>
+      <form id="as-ask" class="as-ask" autocomplete="off">
+        <input id="as-question" type="text" placeholder="Type a question to practise…" aria-label="Question">
+        <button type="submit">Ask</button>
+      </form>
+      <ol id="as-cards" class="cards"></ol>
     </section>
   </aside>
 </main>
