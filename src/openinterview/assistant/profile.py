@@ -184,6 +184,34 @@ def write_generated(dest: Path, markdown: str, to_add: list[str], source_name: s
     dest.write_text(header + markdown.strip() + todo + "\n")
 
 
+NOTES_HEADING = "## Added while practising"
+
+
+def add_note(path: Path, topic: str, text: str) -> None:
+    """Append a fact the user typed (e.g. a real conflict story) to the profile, under its
+    own section, so the next answers can use it. Keeps the AI's trailing comment last."""
+    topic, text = " ".join(topic.split()), " ".join(text.split())
+    if not text:
+        raise ValueError("empty note")
+    entry = f"- {topic.rstrip('.')}: {text}" if topic else f"- {text}"
+    body = path.read_text(errors="replace").rstrip("\n") if path.exists() else ""
+    if is_template_only(body):
+        body = ""
+    tail = ""
+    m = re.search(r"\n*<!-- To complete your profile.*-->\s*$", body, flags=re.S)
+    if m:
+        body, tail = body[:m.start()], "\n\n" + body[m.start():].strip()
+    if NOTES_HEADING in body:
+        head, rest = body.split(NOTES_HEADING, 1)
+        nxt = re.search(r"\n## ", rest)
+        cut = nxt.start() if nxt else len(rest)
+        body = head + NOTES_HEADING + rest[:cut].rstrip("\n") + "\n" + entry + rest[cut:]
+    else:
+        body = (body + "\n\n" if body else "") + NOTES_HEADING + "\n" + entry
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body + tail + "\n")
+
+
 # -- working on the profile with an external assistant (ChatGPT, Claude, ...) -------------
 
 SECTIONS = ["About me", "Target role", "Experience", "Projects", "Education", "Skills",

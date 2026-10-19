@@ -26,6 +26,7 @@ OpenAICompatibleProvider is a lighter alternative for any /v1/chat/completions s
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 import time
 import urllib.error
@@ -43,17 +44,23 @@ COACH_PROMPT = (
 )
 
 ANSWER_RULES = (
-    'Format: {"short_answer": string, "key_points": [string], "python_example": string}. '
-    "short_answer: what a strong candidate would say out loud, 1-2 sentences, at most 45 "
-    "words, plain spoken English. key_points: 3 to 5 terse cues to remember, each at most 8 "
-    "words, not full sentences. python_example: only for technical questions where code "
-    'genuinely helps (algorithms, data structures, language features), at most 10 runnable '
-    'lines; otherwise "". Behavioural questions (about the candidate, their background, '
-    "motivation, teamwork, strengths...): write a first-person model answer. Use facts from "
-    "the candidate profile when one is given; use short [placeholders] (e.g. [your degree]) "
-    "for anything the profile does not cover. Never invent employers, dates, numbers or "
-    "achievements. Key points outline the structure (e.g. STAR: situation, task, action, "
-    "result); no code."
+    'Format: {"short_answer": string, "key_points": [string], "python_example": string, '
+    '"gap": string}. short_answer: what a strong candidate would say out loud, 1-2 '
+    "sentences, at most 45 words, plain spoken English, ready to say as-is: never "
+    "[placeholders], brackets or blanks to fill in. key_points: 3 to 5 terse cues to "
+    "remember, each at most 8 words, not full sentences. python_example: only for technical "
+    "questions where code genuinely helps (algorithms, data structures, language features), "
+    'at most 10 runnable lines; otherwise "". Behavioural questions (about the candidate, '
+    "their background, motivation, teamwork, strengths...): write a first-person model "
+    "answer from facts in the candidate profile. When the profile lacks the specific thing "
+    "asked (a conflict story, a weakness, why this company...), still give an honest answer "
+    "they can say: use the closest real facts from the profile, and how they approach such "
+    "situations, without inventing events, employers, dates, numbers, outcomes or "
+    "feelings. For motivation questions use what the role and job description offer that "
+    "matches their real background. Key points outline the structure (e.g. STAR); no code; "
+    "they are cues for what to say, never notes about the profile or what is missing. "
+    'gap: "" when the profile fully supports the answer; otherwise one short phrase naming '
+    "the missing fact, at most 10 words (e.g. 'No real conflict story in your profile')."
 )
 
 
@@ -85,9 +92,46 @@ def coach_prompt(profile: str = "", target: dict | None = None) -> str:
             "Rules for using the profile: state only facts that are written in it, without "
             "embellishing (no added motives, feelings, anecdotes or numbers). If the profile "
             "does not contain what the question asks for (e.g. a weakness, a conflict story, "
-            "a reason for a choice), do NOT make it up: answer with short [placeholders] such "
-            "as [your weakness] and make one key point say what to add to the profile. For "
-            "technical questions, mention their experience only when clearly relevant.")
+            "a reason for a choice), do NOT make it up: answer honestly from the closest real "
+            "facts and their general approach, with no placeholders, and name the missing "
+            "fact in gap. For technical questions, mention their experience only when "
+            "clearly relevant.")
+
+PREP_PROMPT = (
+    "You help a candidate prepare for a specific job interview. You compare their profile "
+    "with the interview and find the likely questions their profile cannot yet answer "
+    "well. Always reply with ONLY a JSON object in the exact format requested: no prose, "
+    "no code fences."
+)
+
+PREP_RULES = (
+    'Format: {"gaps": [{"question": string, "missing": string, "hint": string}]}. List 3 '
+    "to 5 interview questions that are likely for this role and company (behavioural, "
+    "motivation, or a key skill from the job description) where the profile lacks the facts "
+    "for a strong, true answer. question: as an interviewer would ask it. missing: what "
+    "the profile lacks, at most 12 words. hint: what to write, at most 20 words (e.g. "
+    "'One real disagreement: who, what you did, the result'). Skip anything the profile "
+    "already covers well. Never assume facts about the candidate."
+)
+
+PREP_SCHEMA = {
+    "type": "object",
+    "properties": {"gaps": {"type": "array", "items": {"type": "object"}}},
+    "required": ["gaps"],
+}
+
+
+def _prep_request(profile: str, target: dict | None) -> str:
+    return ((target_text(target).strip() or "This interview: (no company or role given)")
+            + "\n\nCandidate profile:\n<<<\n" + (profile.strip() or "(empty)") + "\n>>>")
+
+
+def _to_gaps(data: dict) -> list[dict]:
+    out = []
+    for g in data.get("gaps", [])[:6]:
+        if isinstance(g, dict) and str(g.get("question", "")).strip():
+            out.append({k: str(g.get(k, "")).strip() for k in ("question", "missing", "hint")})
+    return out
 
 FEEDBACK_RULES = (
     'Format: {"covered": [string], "missed": [string], "tip": string}. Compare the '
@@ -150,8 +194,9 @@ ANSWER_SCHEMA = {
         "key_points": {"type": "array", "items": {"type": "string"}, "minItems": 3,
                        "maxItems": 5},
         "python_example": {"type": "string"},
+        "gap": {"type": "string"},
     },
-    "required": ["short_answer", "key_points", "python_example"],
+    "required": ["short_answer", "key_points", "python_example", "gap"],
     "additionalProperties": False,
 }
 
@@ -174,6 +219,7 @@ class Answer:
     python_example: str = ""
     model: str = ""
     seconds: float = 0.0
+    gap: str = ""  # what the profile lacks for this answer ("" = nothing)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -216,6 +262,8 @@ def _grade_prompt(question: str, answer: Answer, spoken: str) -> str:
 
 
 def _rules(schema: dict) -> str:
+    if "gaps" in schema["properties"]:
+        return PREP_RULES
     if "profile_markdown" in schema["properties"]:
         return PROFILE_RULES
     return FEEDBACK_RULES if "covered" in schema["properties"] else ANSWER_RULES
@@ -232,10 +280,36 @@ def _parse_json_text(text: str) -> dict:
     return json.loads(text[start:end + 1])
 
 
+# Fill-in-the-blank placeholders the model may still produce, e.g. "[your weakness]" or
+# "[Add your reason for Acme here.]". Code such as "nums[i]" is left alone.
+PLACEHOLDER = re.compile(r"\s*\[(?:add|your|insert|specific|fill|to add|name of|reason|"
+                         r"example|describe|mention)\b[^\]]{0,120}\]", re.I)
+
+
+PROFILE_NOTE = re.compile(r"\b(in|to|from) (your |the )?profile\b", re.I)
+
+
+def _strip_placeholders(text: str) -> tuple[str, list[str]]:
+    found = [m.group(0).strip(" []") for m in PLACEHOLDER.finditer(text)]
+    return PLACEHOLDER.sub("", text).strip(), found
+
+
 def _to_answer(data: dict, model: str, seconds: float) -> Answer:
-    points = [str(p) for p in data.get("key_points", [])][:5]
-    return Answer(str(data.get("short_answer", "")).strip(), points,
-                  str(data.get("python_example", "") or "").strip(), model, round(seconds, 2))
+    short, found = _strip_placeholders(str(data.get("short_answer", "")))
+    points = []
+    for p in [str(p) for p in data.get("key_points", [])][:5]:
+        p, f = _strip_placeholders(p)
+        found += f
+        if not p.strip(" :-") or (f and len(p.split()) <= 2):  # drop "Add:" stubs
+            continue
+        if PROFILE_NOTE.search(p):  # "No conflict story in profile": that's the gap's job
+            continue
+        points.append(p)
+    gap = str(data.get("gap", "") or "").strip()
+    if not gap and found:
+        gap = found[0][:80]
+    return Answer(short, points, str(data.get("python_example", "") or "").strip(), model,
+                  round(seconds, 2), gap=gap)
 
 
 def _to_feedback(data: dict) -> Feedback:
@@ -271,6 +345,7 @@ class OpenCodeProvider:
 
     AGENT = "interview-coach"
     BUILDER = "profile-builder"
+    PREP = "interview-prep"
 
     def __init__(self, base_url: str = "http://127.0.0.1:4096", model: str | None = None,
                  timeout: float = 60.0, directory: str | None = None, profile: str = "") -> None:
@@ -310,6 +385,11 @@ class OpenCodeProvider:
             self.BUILDER: {
                 "description": "Turns a CV into an interview profile (OpenInterview)",
                 "mode": "primary", "prompt": PROFILE_BUILDER_PROMPT, "temperature": 0.1,
+                "tools": {"*": False},
+            },
+            self.PREP: {
+                "description": "Finds profile gaps for an interview (OpenInterview)",
+                "mode": "primary", "prompt": PREP_PROMPT, "temperature": 0.2,
                 "tools": {"*": False},
             },
         }}
@@ -369,20 +449,29 @@ class OpenCodeProvider:
             return self._send("Your previous reply was not valid JSON. " + text, schema,
                               agent, session, timeout)
 
-    def build_profile(self, cv_text: str, existing: str = "") -> tuple[str, list[str]]:
-        """Organise a CV into a profile. Uses its own throwaway session, so the CV does not
-        land in the practice conversation."""
-        sid = self._new_session("OpenInterview profile import")
+    def _one_off(self, title: str, text: str, schema: dict, agent: str,
+                 timeout: float) -> dict:
+        """A request in its own throwaway session, outside the practice conversation."""
+        sid = self._new_session(title)
         try:
-            data, _ = self._ask(_profile_request(cv_text, existing), PROFILE_SCHEMA,
-                                agent=self.BUILDER, session=sid,
-                                timeout=max(PROFILE_TIMEOUT, self.http.timeout))
+            data, _ = self._ask(text, schema, agent=agent, session=sid, timeout=timeout)
         finally:
             try:
                 self.http.request("DELETE", f"/session/{sid}", query=self._q())
             except ProviderError:
                 pass
-        return _to_profile(data)
+        return data
+
+    def build_profile(self, cv_text: str, existing: str = "") -> tuple[str, list[str]]:
+        """Organise a CV into a profile (throwaway session: the CV stays out of practice)."""
+        return _to_profile(self._one_off("OpenInterview profile import",
+                                         _profile_request(cv_text, existing), PROFILE_SCHEMA,
+                                         self.BUILDER, max(PROFILE_TIMEOUT, self.http.timeout)))
+
+    def check_gaps(self, profile: str, target: dict | None) -> list[dict]:
+        """Likely questions for this interview that the profile cannot answer yet."""
+        return _to_gaps(self._one_off("OpenInterview prep check", _prep_request(profile, target),
+                                      PREP_SCHEMA, self.PREP, max(120.0, self.http.timeout)))
 
     def answer(self, question: str, context: list[str]) -> Answer:
         t0 = time.monotonic()
@@ -462,6 +551,15 @@ class OpenAICompatibleProvider:
             "response_format": {"type": "json_object"}}, headers=self._headers(),
             timeout=max(PROFILE_TIMEOUT, self.http.timeout))
         return _to_profile(_parse_json_text(r["choices"][0]["message"]["content"]))
+
+    def check_gaps(self, profile: str, target: dict | None) -> list[dict]:
+        messages = [{"role": "system", "content": PREP_PROMPT + "\n" + PREP_RULES},
+                    {"role": "user", "content": _prep_request(profile, target)}]
+        r = self.http.request("POST", "/chat/completions", {
+            "model": self.model, "messages": messages, "temperature": 0.2,
+            "response_format": {"type": "json_object"}}, headers=self._headers(),
+            timeout=max(120.0, self.http.timeout))
+        return _to_gaps(_parse_json_text(r["choices"][0]["message"]["content"]))
 
     def close(self) -> None:
         pass

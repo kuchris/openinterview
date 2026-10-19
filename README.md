@@ -243,8 +243,9 @@ turns the interviewer's complete questions into practice cards:
      "why did you choose…", "describe a time…", strengths, experience, team…). Small talk
      ("How are you?", "Can you hear me?") is ignored (`assistant.filter_small_talk`).
 
-   Behavioural questions get a model answer with `[placeholders]` for your own details, and
-   key points that outline the structure (e.g. STAR). They get no code.
+   Behavioural questions get a first-person model answer built from your profile, and key
+   points that outline the structure (e.g. STAR). They get no code, and never blanks to fill
+   in (see "Facts only" below).
 
    Near-duplicates (≥ 85% similar to a recent question) are skipped. At most one request is
    in flight; the small backlog drops its oldest entry.
@@ -264,8 +265,8 @@ You can also type a question in the panel.
 
 ### Your profile (personalised behavioural answers)
 
-Without a profile, behavioural answers ("Tell me about yourself", "Why this major?") are
-templates with `[placeholders]`. Add your background and they are written about you:
+Without a profile, behavioural answers ("Tell me about yourself", "Why this major?") can
+only be general. Add your background and they are written about you:
 
 ```bash
 uv run openinterview profile import ~/Documents/cv.pdf   # PDF, Word, RTF, Pages or text
@@ -312,11 +313,22 @@ version is kept as `profile.backup.md`. Pasted text without `##` sections is rej
 stray chat message can't overwrite your profile. Note that the prompt contains your CV:
 paste it only into a service you trust with it.
 
-- **Facts only.** Answers state only facts from your profile. When it doesn't cover what's
-  asked (say, no weakness written down), the answer keeps a `[placeholder]` and a key point
-  tells you what to add. Nothing is made up. Verified live: without a weakness in the
-  profile, the answer was "My honest weakness is [your weakness]…" with "Add: [your weakness
-  + fix] to profile".
+- **Facts only, and always sayable.** Answers state only facts from your profile and never
+  contain `[placeholders]` to fill in mid-interview. When the profile lacks what's asked
+  (say, no conflict story), the answer is still something you can say honestly: it uses the
+  closest real facts and how you approach such situations, without inventing events,
+  employers or numbers. Any leftover `[your …]` / `[Add …]` text from the model is removed.
+- **💡 Gap hint + Add to profile.** When an answer had to work around missing facts, a
+  hint below it names what's missing ("No real conflict story in your profile").
+  **Add to profile…** lets you type the real story in a sentence or two. It's appended
+  under `## Added while practising` in your profile, and that question is answered again
+  using it. Next time the gap is gone.
+- **Check before the interview.** In the New session sheet, **Check my profile for this
+  interview** compares your profile with the company, role and job description. It lists
+  the 3–5 likely questions your profile can't answer well yet (e.g. "This role uses Go and
+  Kafka. What hands-on experience do you have?"), each with what's missing and what to
+  write. Answer the ones you can, then **Save answers to profile**. It runs in its own
+  throwaway session (agent `interview-prep`) and took ~12 s live.
 - **Stored outside the project** (`assistant.profile_path`, default
   `~/.openinterview/profile.md`), so it never ends up in git.
 - **Privacy:** importing sends your CV to your AI provider (OpenCode → the model you chose)

@@ -158,6 +158,34 @@ class PracticeAssistant:
         info = self.reload_profile()
         return {**info, **result}
 
+    def add_note(self, topic: str, text: str, card_id: int | None = None) -> dict:
+        """Save a fact to the profile; with `card_id`, answer that question again using it."""
+        profile.add_note(self.profile_path, topic, text)
+        info = self.reload_profile()
+        if card_id is not None:
+            with self._lock:
+                card = self.cards.get(card_id)
+                if card is not None and self.enabled and self.provider is not None:
+                    card.update(status="thinking", answer=None, error="", feedback=None,
+                                feedback_status="")
+                    self._queue.put(card_id)
+                else:
+                    card = None
+            if card is not None:
+                self._publish_card(card)
+        return info
+
+    def check_gaps(self, target: dict | None) -> list[dict]:
+        """Before an interview: likely questions the profile cannot answer yet."""
+        provider, temp = self.provider, None
+        if provider is None:
+            provider = temp = self.provider_factory(self.cfg)
+        try:
+            return provider.check_gaps(profile.load(self.profile_path), target or {})
+        finally:
+            if temp is not None and hasattr(temp, "close"):
+                temp.close()
+
     def set_mode(self, mode: str) -> None:
         if mode not in ("practice", "immediate"):
             raise ValueError("mode must be practice or immediate")

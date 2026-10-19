@@ -37,6 +37,7 @@ struct ContentView: View {
         .navigationTitle("OpenInterview")
         .navigationSubtitle(subtitle)
         .sheet(isPresented: $m.showNewSession) { NewSessionSheet() }
+        .sheet(item: $m.noteCard) { card in AddNoteSheet(card: card) }
         .onAppear {
             // Development aid for UI checks: open a window or sheet at launch.
             switch ProcessInfo.processInfo.environment["OPENINTERVIEW_UI_OPEN"] {
@@ -341,6 +342,8 @@ struct AnswerView: View {
                     .font(.system(size: 17)).lineSpacing(4).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
 
+                if !card.gap.isEmpty { GapHint(card: card) }
+
                 if !card.keyPoints.isEmpty {
                     SectionBox(title: "Key points", icon: "list.bullet") {
                         VStack(alignment: .leading, spacing: 7) {
@@ -368,6 +371,66 @@ struct AnswerView: View {
                 }
             }
         }
+    }
+}
+
+/// What the profile is missing for this answer, with a way to add it.
+struct GapHint: View {
+    @EnvironmentObject var m: AppModel
+    let card: Card
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "lightbulb").foregroundStyle(.yellow)
+            Text(card.gap).font(.callout).foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            Button("Add to profile…") { m.noteCard = card }.controlSize(.small)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.yellow.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.yellow.opacity(0.25)))
+    }
+}
+
+struct AddNoteSheet: View {
+    @EnvironmentObject var m: AppModel
+    let card: Card
+    @State private var text = ""
+    @State private var saving = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Add to your profile").font(.title2.weight(.semibold))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(card.question).font(.headline)
+                Text(card.gap).font(.callout).foregroundStyle(.secondary)
+            }
+            TextEditor(text: $text)
+                .font(.body).frame(height: 120)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25)))
+            Text("Write only what's true, in a sentence or two: what happened, what you did, the "
+                 + "result. It's saved to your profile, and this question is answered again.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                if saving { ProgressView().controlSize(.small) }
+                Spacer()
+                Button("Cancel") { m.noteCard = nil }.keyboardShortcut(.cancelAction)
+                Button("Save & re-answer") {
+                    saving = true
+                    Task {
+                        if await m.addNote(topic: card.question, text: text, cardId: card.id) {
+                            m.noteCard = nil
+                        }
+                        saving = false
+                    }
+                }
+                .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                .disabled(saving || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 480)
     }
 }
 
@@ -589,6 +652,7 @@ struct NewSessionSheet: View {
                     Text("Optional. Paste the posting so answers stress what this role asks for.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                PrepSection()
                 Toggle("Save this session", isOn: $m.saveSession)
                 Toggle("Record audio", isOn: $m.saveAudio).disabled(!m.saveSession)
                 if m.saveSession && m.saveAudio && m.source != "mic" {
@@ -597,6 +661,7 @@ struct NewSessionSheet: View {
                 }
             }
             .formStyle(.grouped)
+            .frame(height: m.prepGaps.isEmpty ? 470 : 600)
             HStack {
                 Button("Clear fields") {
                     m.sessionTitle = ""; m.company = ""; m.role = ""; m.jobDescription = ""
@@ -608,6 +673,45 @@ struct NewSessionSheet: View {
             }
             .padding(20)
         }
-        .frame(width: 520)
+        .frame(width: 560)
+    }
+}
+
+/// Pre-interview check: likely questions the profile cannot answer yet, filled in here.
+struct PrepSection: View {
+    @EnvironmentObject var m: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Button {
+                    m.checkProfile()
+                } label: {
+                    Label("Check my profile for this interview", systemImage: "checklist")
+                }
+                .disabled(m.prepBusy)
+                if m.prepBusy { ProgressView().controlSize(.small) }
+            }
+            if !m.prepMessage.isEmpty {
+                Text(m.prepMessage).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach($m.prepGaps) { $gap in
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(gap.question).font(.callout.weight(.semibold))
+                    Text(gap.missing + (gap.hint.isEmpty ? "" : " · " + gap.hint))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    TextField("Your answer (only what's true)", text: $gap.answer, axis: .vertical)
+                        .lineLimit(2...4).textFieldStyle(.roundedBorder)
+                }
+                .padding(.vertical, 2)
+            }
+            if !m.prepGaps.isEmpty {
+                Button("Save answers to profile") { m.savePrepAnswers() }
+                    .disabled(m.prepBusy || m.prepGaps.allSatisfy {
+                        $0.answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+            }
+        }
     }
 }

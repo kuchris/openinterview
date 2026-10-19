@@ -38,6 +38,7 @@ struct Card: Identifiable, Equatable {
     var shortAnswer = ""
     var keyPoints: [String] = []
     var example = ""
+    var gap = ""
     var model = ""
     var seconds = 0.0
     var spoken: [String] = []
@@ -58,6 +59,7 @@ struct Card: Identifiable, Equatable {
             shortAnswer = a["short_answer"] as? String ?? ""
             keyPoints = a["key_points"] as? [String] ?? []
             example = a["python_example"] as? String ?? ""
+            gap = a["gap"] as? String ?? ""
             model = a["model"] as? String ?? ""
             seconds = a["seconds"] as? Double ?? 0
         }
@@ -67,6 +69,15 @@ struct Card: Identifiable, Equatable {
             tip = f["tip"] as? String ?? ""
         }
     }
+}
+
+/// A likely interview question the profile cannot answer yet (pre-interview check).
+struct PrepGap: Identifiable, Equatable {
+    let id = UUID()
+    var question: String
+    var missing: String
+    var hint: String
+    var answer = ""
 }
 
 func speaker(_ source: String) -> String {
@@ -107,6 +118,10 @@ final class AppModel: ObservableObject {
     @Published var selectedCard: Int?
     // next session (pre-filled from the last one)
     @Published var showNewSession = false
+    @Published var noteCard: Card?            // "Add to profile" sheet for this answer
+    @Published var prepGaps: [PrepGap] = []
+    @Published var prepBusy = false
+    @Published var prepMessage = ""
     @Published var sessionTitle = UserDefaults.standard.string(forKey: "sessionTitle") ?? ""
     @Published var company = UserDefaults.standard.string(forKey: "company") ?? ""
     @Published var role = UserDefaults.standard.string(forKey: "role") ?? ""
@@ -207,6 +222,56 @@ final class AppModel: ObservableObject {
         let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
         Task { await request("POST", "api/assistant/ask", ["question": q]) }
+    }
+
+    /// Save a fact to the profile; with a card, that question is answered again using it.
+    func addNote(topic: String, text: String, cardId: Int?) async -> Bool {
+        var body: [String: Any] = ["topic": topic, "text": text]
+        if let cardId { body["card_id"] = cardId }
+        guard let info = await request("POST", "api/profile/note", body, timeout: 60) else {
+            return false
+        }
+        applyProfile(info)
+        return true
+    }
+
+    var targetBody: [String: Any] {
+        ["company": company, "role": role, "job_description": jobDescription]
+    }
+
+    func checkProfile() {
+        prepBusy = true
+        prepGaps = []
+        prepMessage = "Comparing your profile with this interview…"
+        Task {
+            defer { prepBusy = false }
+            guard let r = await request("POST", "api/prep", ["target": targetBody], timeout: 150) else {
+                prepMessage = error
+                return
+            }
+            prepGaps = (r["gaps"] as? [[String: Any]] ?? []).map {
+                PrepGap(question: $0["question"] as? String ?? "",
+                        missing: $0["missing"] as? String ?? "", hint: $0["hint"] as? String ?? "")
+            }
+            prepMessage = prepGaps.isEmpty
+                ? "Your profile covers the likely questions for this interview."
+                : "Answer what you can. Only write what's true; skip the rest."
+        }
+    }
+
+    func savePrepAnswers() {
+        let filled = prepGaps.filter { !$0.answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard !filled.isEmpty else { return }
+        prepBusy = true
+        Task {
+            defer { prepBusy = false }
+            var saved = 0
+            for g in filled where await addNote(topic: g.question, text: g.answer, cardId: nil) {
+                saved += 1
+                prepGaps.removeAll { $0.id == g.id }
+            }
+            prepMessage = "Saved \(saved) answer\(saved == 1 ? "" : "s") to your profile."
+        }
     }
 
     func grade(_ id: Int) {
@@ -458,7 +523,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let wanted = ProcessInfo.processInfo.environment["OPENINTERVIEW_UI_SNAPSHOT_TITLE"]
                 if let window = NSApp.windows.first(where: { $0.isVisible && (wanted == nil || $0.title == wanted) })
                     ?? NSApp.windows.first(where: { $0.isVisible }),
-                   let image = captureOwnWindow(window) {
+                   let image = captureOwnWindow(window.attachedSheet ?? window) {
                     let rep = NSBitmapImageRep(cgImage: image)
                     try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
                 }

@@ -413,3 +413,71 @@ def test_mock_interview_script_matches_the_detector(capsys):
     assert mock.dry_run(mock.script(quick=True)) == 0
     lines = mock.script()
     assert {ln.expect for ln in lines} == {"question", "ignore"}
+
+
+# -- answers without placeholders; filling gaps -------------------------------------------
+
+def test_placeholders_are_moved_out_of_the_answer_into_gap():
+    from openinterview.assistant.providers import _to_answer
+
+    a = _to_answer({"short_answer": "The role fits my C++ work. [Add your reason for Acme.]",
+                    "key_points": ["Role match", "Add: [your Acme motivation]",
+                                   "Index with nums[i]"], "python_example": "", "gap": ""},
+                   "m", 1.0)
+    assert a.short_answer == "The role fits my C++ work."
+    assert a.key_points == ["Role match", "Index with nums[i]"]  # code brackets kept
+    assert a.gap == "Add your reason for Acme."
+    b = _to_answer({"short_answer": "I stay calm.", "gap": "No conflict story",
+                    "key_points": ["No real conflict story in profile", "Use evidence"]}, "m", 1.0)
+    assert b.key_points == ["Use evidence"]
+    assert b.gap == "No conflict story" and "[" not in b.short_answer
+
+
+def test_answer_rules_forbid_placeholders():
+    from openinterview.assistant.providers import ANSWER_RULES, coach_prompt
+
+    assert "never [placeholders]" in ANSWER_RULES and '"gap"' in ANSWER_RULES
+    assert "[placeholders] such as" not in coach_prompt("- Name: Alex")
+
+
+def test_add_note_saves_to_profile_and_re_answers_the_card(tmp_path):
+    from openinterview.assistant import profile as prof
+
+    prov = FakeProvider()
+    path = tmp_path / "profile.md"
+    path.write_text("## About me\n- Alex")
+    a, msgs = make_assistant(prov, profile_path=str(path))
+    card = a.ask("Tell me about a conflict with a teammate.")
+    assert wait_for(lambda: a.cards[card["id"]]["status"] == "ready")
+    a.add_note(card["question"], "We disagreed on retries and load-tested both.", card["id"])
+    assert wait_for(lambda: len(prov.questions) == 2 and a.cards[card["id"]]["status"] == "ready")
+    text = prof.load(path)
+    assert "## Added while practising" in text and "load-tested both" in text
+    a.add_note("Biggest weakness", "I over-polish before sharing.")
+    assert prof.load(path).count("\n- ") == 3  # one section, entries appended
+    with pytest.raises(ValueError):
+        a.add_note("x", "  ")
+
+
+def test_prep_check_and_note_api(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from openinterview.config import Config
+    from openinterview.web.server import create_app
+
+    class PrepProvider(FakeProvider):
+        def check_gaps(self, profile, target):
+            self.seen = (profile, target)
+            return [{"question": "Why Acme?", "missing": "No motivation", "hint": "One reason"}]
+
+    prov = PrepProvider()
+    cfg = Config()
+    cfg.storage.save_sessions = False
+    cfg.assistant.profile_path = str(tmp_path / "profile.md")
+    with TestClient(create_app(cfg, provider_factory=lambda c: prov)) as client:
+        r = client.post("/api/prep", json={"target": {"company": "Acme"}}).json()
+        assert r["gaps"][0]["question"] == "Why Acme?" and prov.seen[1] == {"company": "Acme"}
+        info = client.post("/api/profile/note", json={"topic": "Why Acme?",
+                                                       "text": "I use their API daily."}).json()
+        assert info["loaded"] and "use their API daily" in (tmp_path / "profile.md").read_text()
+        assert client.post("/api/profile/note", json={"text": ""}).status_code == 400

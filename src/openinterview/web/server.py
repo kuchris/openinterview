@@ -18,6 +18,8 @@ HTTP
   POST /api/profile/edit   create the template if needed; returns the path to open
   POST /api/profile/reload re-read the profile after editing
   GET  /api/profile/prompt prompt to finish the profile in ChatGPT / Claude
+  POST /api/profile/note   {"topic", "text", "card_id"?}  add a fact; re-answer the card
+  POST /api/prep           {"target"}  likely questions the profile cannot answer yet
   GET  /api/sessions       saved sessions (newest first)
   GET  /api/sessions/{id}  one session: target, Q&A cards, transcript, audio paths
   GET  /api/sessions/{id}/audio/{source}       the session's audio file
@@ -264,6 +266,27 @@ def create_app(cfg: Config, session_factory=None, provider_factory=make_provider
             raise HTTPException(400, str(exc)) from exc
         info = await asyncio.to_thread(assistant.reload_profile)
         return {**info, **result}
+
+    @app.post("/api/profile/note")
+    async def profile_note(body: dict = Body(default={})):
+        card_id = body.get("card_id")
+        try:
+            return await asyncio.to_thread(assistant.add_note, str(body.get("topic") or ""),
+                                           str(body.get("text") or ""),
+                                           int(card_id) if card_id is not None else None)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/api/prep")
+    async def prep(body: dict = Body(default={})):
+        target = body.get("target") or {}
+        if not isinstance(target, dict):
+            raise HTTPException(400, "target must be an object")
+        try:
+            gaps = await asyncio.to_thread(assistant.check_gaps, target)
+        except Exception as exc:
+            raise HTTPException(502, f"gap check failed: {exc}") from exc
+        return {"gaps": gaps}
 
     @app.post("/api/profile/reload")
     async def profile_reload():
