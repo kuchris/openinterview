@@ -82,7 +82,28 @@ def test_opencode_agent_gets_profile_and_new_session_on_change(tmp_path):
         assert "Sam" in json.load(f)["agent"]["interview-coach"]["prompt"]
 
 
-def test_profile_api_import_and_state(tmp_path):
+class FakeBuilder:
+    """Stands in for the LLM: records what it was given, returns a structured profile."""
+
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.calls = []
+
+    def build_profile(self, cv_text, existing=""):
+        self.calls.append((cv_text, existing))
+        if self.fail:
+            raise RuntimeError("OpenCode unreachable")
+        return ("## About me\n- Name: Alex Chan\n\n## Weaknesses\n- [to add]",
+                ["Which role are you targeting?", "What is a real weakness?"])
+
+    def health(self):
+        return True, "fake"
+
+    def close(self):
+        pass
+
+
+def make_client(tmp_path, builder):
     from fastapi.testclient import TestClient
 
     from openinterview.config import Config
@@ -90,12 +111,45 @@ def test_profile_api_import_and_state(tmp_path):
 
     cfg = Config()
     cfg.assistant.profile_path = str(tmp_path / "profile.md")
-    cv = tmp_path / "cv.txt"
+    return TestClient(create_app(cfg, provider_factory=lambda c: builder))
+
+
+def test_profile_api_ai_import_organises_cv_and_lists_gaps(tmp_path):
+    cv = tmp_path / "my_cv.txt"
     cv.write_text("Alex Chan, intern at Octopus Cards")
-    with TestClient(create_app(cfg)) as client:
+    builder = FakeBuilder()
+    with make_client(tmp_path, builder) as client:
         assert client.get("/api/profile").json()["loaded"] is False
         assert client.post("/api/profile/edit").json()["exists"] is True
-        info = client.post("/api/profile/import", json={"path": str(cv)}).json()
-        assert info["loaded"] and info["words"] > 0
+        r = client.post("/api/profile/import", json={"path": str(cv)}).json()
+        assert r["method"] == "ai" and r["loaded"] and r["to_add"]
+        assert builder.calls[0][0] == "Alex Chan, intern at Octopus Cards"
+        saved = (tmp_path / "profile.md").read_text()
+        assert "## About me" in saved and "Which role are you targeting?" in saved
+        # gap questions live in a comment: never part of the prompt text
+        assert "Which role" not in prof.load(tmp_path / "profile.md")
+        assert (tmp_path / "cv.txt").read_text().startswith("Alex Chan")  # raw text kept
         assert client.post("/api/profile/import", json={"path": "/nope.pdf"}).status_code == 400
         assert client.get("/api/assistant").json()["profile"]["loaded"] is True
+
+
+def test_profile_import_falls_back_to_raw_text_when_ai_fails(tmp_path):
+    cv = tmp_path / "resume.md"
+    cv.write_text("Alex Chan, intern at Octopus Cards")
+    with make_client(tmp_path, FakeBuilder(fail=True)) as client:
+        r = client.post("/api/profile/import", json={"path": str(cv)}).json()
+        assert r["method"] == "raw" and "unreachable" in r["warning"] and r["loaded"]
+        assert "## CV (resume.md)" in (tmp_path / "profile.md").read_text()
+
+
+def test_existing_notes_are_passed_to_the_builder(tmp_path):
+    from openinterview.assistant.practice import import_profile
+    from openinterview.config import AssistantConfig
+
+    dest = tmp_path / "profile.md"
+    dest.write_text("## Target role\n- Backend engineer at a fintech")
+    cv = tmp_path / "cv.txt"
+    cv.write_text("Alex Chan")
+    builder = FakeBuilder()
+    import_profile(AssistantConfig(profile_path=str(dest)), str(cv), builder)
+    assert "Backend engineer at a fintech" in builder.calls[0][1]

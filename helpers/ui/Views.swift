@@ -138,11 +138,22 @@ struct SettingsPopover: View {
                     Button("Import CV…", action: m.importCV)
                     Button("Edit…", action: m.editProfile)
                     Button("Reload", action: m.reloadProfile)
+                    if m.profileBusy { ProgressView().controlSize(.small) }
                 }
+                .disabled(m.profileBusy)
                 if !m.profileMessage.isEmpty {
                     Text(m.profileMessage).font(.caption).foregroundStyle(.secondary)
                 }
-                Text("Your profile is sent to your AI provider (OpenCode) with each question.")
+                if !m.profileToAdd.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("To complete it, add to your profile:").font(.caption.weight(.semibold))
+                        ForEach(m.profileToAdd, id: \.self) { q in
+                            Label(q, systemImage: "plus.circle").font(.caption)
+                        }
+                    }
+                    .foregroundStyle(.secondary)
+                }
+                Text("Importing sends your CV to your AI provider (OpenCode) to organise it; the profile is then sent with each question.")
                     .font(.caption2).foregroundStyle(.tertiary)
             }
         }

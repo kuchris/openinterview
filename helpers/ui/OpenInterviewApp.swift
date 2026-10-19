@@ -101,6 +101,8 @@ final class AppModel: ObservableObject {
     @Published var profileWords = 0
     @Published var profilePath = ""
     @Published var profileMessage = ""
+    @Published var profileToAdd: [String] = []
+    @Published var profileBusy = false
     @Published var cards: [Card] = []
     @Published var selectedCard: Int?
     private var socket: URLSessionWebSocketTask?
@@ -121,10 +123,11 @@ final class AppModel: ObservableObject {
     // -- HTTP ----------------------------------------------------------------------------
 
     @discardableResult
-    func request(_ method: String, _ path: String, _ body: [String: Any]? = nil) async -> [String: Any]? {
+    func request(_ method: String, _ path: String, _ body: [String: Any]? = nil,
+                 timeout: TimeInterval = 30) async -> [String: Any]? {
         var req = URLRequest(url: baseURL.appendingPathComponent(path))
         req.httpMethod = method
-        req.timeoutInterval = 30
+        req.timeoutInterval = timeout
         if let body {
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
@@ -252,11 +255,19 @@ final class AppModel: ObservableObject {
                                      .init(filenameExtension: "pages")!, .init(filenameExtension: "md")!]
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        profileMessage = "Importing…"
+        profileBusy = true
+        profileToAdd = []
+        profileMessage = "Analysing \(url.lastPathComponent) with AI…"
         Task {
-            if let info = await request("POST", "api/profile/import", ["path": url.path]) {
+            defer { profileBusy = false }
+            if let info = await request("POST", "api/profile/import", ["path": url.path], timeout: 180) {
                 applyProfile(info)
-                profileMessage = "Imported \(url.lastPathComponent). Review it with Edit…"
+                profileToAdd = info["to_add"] as? [String] ?? []
+                if (info["method"] as? String) == "ai" {
+                    profileMessage = "Profile organised from \(url.lastPathComponent). Check it with Edit…"
+                } else {
+                    profileMessage = info["warning"] as? String ?? "Imported the raw CV text."
+                }
             } else {
                 profileMessage = error
             }

@@ -77,6 +77,50 @@ FEEDBACK_RULES = (
     "one concrete sentence, at most 25 words, on what to add or say better."
 )
 
+PROFILE_BUILDER_PROMPT = (
+    "You turn a candidate's CV into a concise interview-preparation profile in Markdown. "
+    "Use ONLY facts stated in the CV text and in their existing profile notes. Never invent "
+    "or guess employers, dates, numbers, motives, feelings or outcomes. Always reply with "
+    "ONLY a JSON object in the exact format requested: no prose, no code fences."
+)
+
+PROFILE_RULES = (
+    'Format: {"profile_markdown": string, "to_add": [string]}. profile_markdown: at most '
+    "600 words, with exactly these sections: '## About me' (name, current role/status, "
+    "location if given), '## Target role' ('- [to add]' unless the sources state one), "
+    "'## Experience' (each role: title, organisation, dates, then 1-2 bullets of concrete "
+    "work and impact, keeping the CV's numbers), '## Projects', '## Education', "
+    "'## Skills' (grouped, one line each), '## Strengths' (2-3, each backed by evidence "
+    "from the CV), '## Weaknesses' ('- [to add]' unless stated), '## Stories (STAR)' (2-3 "
+    "outlines drafted from CV achievements: Situation / Task / Action / Result using only "
+    "CV facts, writing [?] for any part the CV does not state). Keep everything from the "
+    "existing notes. Use '- [to add]' for any section the sources do not cover. to_add: 3 "
+    "to 6 short questions the candidate should answer to complete the profile (e.g. "
+    "'Which role and company are you targeting?', 'What is a real weakness and how are "
+    "you improving it?')."
+)
+
+PROFILE_SCHEMA = {
+    "type": "object",
+    "properties": {"profile_markdown": {"type": "string"},
+                   "to_add": {"type": "array", "items": {"type": "string"}}},
+    "required": ["profile_markdown", "to_add"],
+}
+
+
+def _profile_request(cv_text: str, existing: str) -> str:
+    notes = existing.strip() or "(none)"
+    return (f"Existing profile notes (keep them):\n<<<\n{notes}\n>>>\n\n"
+            f"CV text:\n<<<\n{cv_text.strip()[:20000]}\n>>>")
+
+
+def _to_profile(data: dict) -> tuple[str, list[str]]:
+    md = str(data.get("profile_markdown", "")).strip()
+    if not md:
+        raise ProviderError("model returned an empty profile")
+    return md, [str(q) for q in data.get("to_add", [])][:8]
+
+
 ANSWER_SCHEMA = {
     "type": "object",
     "properties": {
@@ -150,6 +194,8 @@ def _grade_prompt(question: str, answer: Answer, spoken: str) -> str:
 
 
 def _rules(schema: dict) -> str:
+    if "profile_markdown" in schema["properties"]:
+        return PROFILE_RULES
     return FEEDBACK_RULES if "covered" in schema["properties"] else ANSWER_RULES
 
 
@@ -201,6 +247,7 @@ class OpenCodeProvider:
     name = "opencode"
 
     AGENT = "interview-coach"
+    BUILDER = "profile-builder"
 
     def __init__(self, base_url: str = "http://127.0.0.1:4096", model: str | None = None,
                  timeout: float = 60.0, directory: str | None = None, profile: str = "") -> None:
@@ -224,11 +271,18 @@ class OpenCodeProvider:
     def _write_agent_config(self) -> None:
         import os
 
-        config = {"$schema": "https://opencode.ai/config.json", "agent": {self.AGENT: {
-            "description": "Concise technical interview coach (OpenInterview)",
-            "mode": "primary", "prompt": coach_prompt(self.profile), "temperature": 0.3,
-            "tools": {"*": False},
-        }}}
+        config = {"$schema": "https://opencode.ai/config.json", "agent": {
+            self.AGENT: {
+                "description": "Concise interview coach (OpenInterview)",
+                "mode": "primary", "prompt": coach_prompt(self.profile), "temperature": 0.3,
+                "tools": {"*": False},
+            },
+            self.BUILDER: {
+                "description": "Turns a CV into an interview profile (OpenInterview)",
+                "mode": "primary", "prompt": PROFILE_BUILDER_PROMPT, "temperature": 0.1,
+                "tools": {"*": False},
+            },
+        }}
         with open(os.path.join(self.directory, "opencode.json"), "w") as f:
             json.dump(config, f, indent=2)
 
@@ -242,22 +296,27 @@ class OpenCodeProvider:
         except ProviderError as exc:
             return False, str(exc)
 
+    def _new_session(self, title: str) -> str:
+        s = self.http.request("POST", "/session", {
+            "title": title,
+            "permission": [{"permission": "*", "pattern": "*", "action": "deny"}],
+        }, self._q())
+        return s["id"]
+
     def _session(self) -> str:
         if self.session_id is None:
-            s = self.http.request("POST", "/session", {
-                "title": "OpenInterview practice",
-                "permission": [{"permission": "*", "pattern": "*", "action": "deny"}],
-            }, self._q())
-            self.session_id = s["id"]
+            self.session_id = self._new_session("OpenInterview practice")
         return self.session_id
 
-    def _send(self, text: str, schema: dict) -> tuple[dict, str]:
-        body: dict = {"agent": self.AGENT, "system": _rules(schema),
+    def _send(self, text: str, schema: dict, agent: str | None = None,
+              session: str | None = None) -> tuple[dict, str]:
+        body: dict = {"agent": agent or self.AGENT, "system": _rules(schema),
                       "parts": [{"type": "text", "text": text}]}
         if self.model and "/" in self.model:
             provider, model = self.model.split("/", 1)
             body["model"] = {"providerID": provider, "modelID": model}
-        r = self.http.request("POST", f"/session/{self._session()}/message", body, self._q())
+        sid = session or self._session()
+        r = self.http.request("POST", f"/session/{sid}/message", body, self._q())
         info = r.get("info", {})
         if info.get("error"):
             err = info["error"]
@@ -269,13 +328,29 @@ class OpenCodeProvider:
         text = "".join(p.get("text", "") for p in r.get("parts", []) if p.get("type") == "text")
         return _parse_json_text(text), model
 
-    def _ask(self, text: str, schema: dict) -> tuple[dict, str]:
+    def _ask(self, text: str, schema: dict, agent: str | None = None,
+             session: str | None = None) -> tuple[dict, str]:
         try:
-            return self._send(text, schema)
+            return self._send(text, schema, agent, session)
         except (ProviderError, ValueError) as exc:
             if isinstance(exc, ProviderError) and not str(exc).startswith("model did not"):
                 raise  # transport / auth errors: retrying will not help
-            return self._send("Your previous reply was not valid JSON. " + text, schema)
+            return self._send("Your previous reply was not valid JSON. " + text, schema,
+                              agent, session)
+
+    def build_profile(self, cv_text: str, existing: str = "") -> tuple[str, list[str]]:
+        """Organise a CV into a profile. Uses its own throwaway session, so the CV does not
+        land in the practice conversation."""
+        sid = self._new_session("OpenInterview profile import")
+        try:
+            data, _ = self._ask(_profile_request(cv_text, existing), PROFILE_SCHEMA,
+                                agent=self.BUILDER, session=sid)
+        finally:
+            try:
+                self.http.request("DELETE", f"/session/{sid}", query=self._q())
+            except ProviderError:
+                pass
+        return _to_profile(data)
 
     def answer(self, question: str, context: list[str]) -> Answer:
         t0 = time.monotonic()
@@ -340,6 +415,14 @@ class OpenAICompatibleProvider:
 
     def grade(self, question: str, answer: Answer, spoken: str) -> Feedback:
         return _to_feedback(self._chat(_grade_prompt(question, answer, spoken), FEEDBACK_SCHEMA))
+
+    def build_profile(self, cv_text: str, existing: str = "") -> tuple[str, list[str]]:
+        messages = [{"role": "system", "content": PROFILE_BUILDER_PROMPT + "\n" + PROFILE_RULES},
+                    {"role": "user", "content": _profile_request(cv_text, existing)}]
+        r = self.http.request("POST", "/chat/completions", {
+            "model": self.model, "messages": messages, "temperature": 0.1,
+            "response_format": {"type": "json_object"}}, headers=self._headers())
+        return _to_profile(_parse_json_text(r["choices"][0]["message"]["content"]))
 
     def close(self) -> None:
         pass

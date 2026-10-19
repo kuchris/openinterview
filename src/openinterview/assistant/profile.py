@@ -2,7 +2,8 @@
 
 A plain Markdown file, by default ~/.openinterview/profile.md. It lives outside the project
 so it never ends up in git. Fill in the template, or import a CV (PDF, Word, RTF, Pages,
-text) and edit the result.
+text): the AI organises it into this structure using only facts from the CV, marks gaps
+"[to add]" and lists questions to answer. The raw CV text is kept next to it as cv.txt.
 
 Privacy: the profile text is sent to the configured LLM provider with each question.
 """
@@ -128,3 +129,26 @@ def info(path: Path) -> dict:
     return {"path": str(path), "exists": path.exists(), "loaded": bool(text),
             "words": len(text.split()), "truncated": path.exists()
             and len(path.read_text(errors="replace")) > MAX_CHARS}
+
+
+def save_cv_text(text: str, folder: Path) -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / "cv.txt"
+    path.write_text(text + "\n")
+    return path
+
+
+def write_generated(dest: Path, markdown: str, to_add: list[str], source_name: str) -> None:
+    """Write an AI-organised profile. Notes for the user live in HTML comments, which
+    load() strips, so they are never sent to the model."""
+    from datetime import date
+
+    header = (f"<!-- Organised from {source_name} by AI on {date.today()}. Check every line: "
+              "fix anything wrong and fill in the [to add] parts. This text is sent to your "
+              "AI provider with each question. -->\n\n")
+    todo = ""
+    if to_add:
+        todo = ("\n\n<!-- To complete your profile, answer these (write the answers in the "
+                "sections above):\n" + "\n".join(f"- {q}" for q in to_add) + "\n-->")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(header + markdown.strip() + todo + "\n")

@@ -340,9 +340,18 @@ def cmd_profile(args: argparse.Namespace, cfg: Config) -> int:
         if not args.file:
             print("usage: openinterview profile import CV_FILE", file=sys.stderr)
             return 2
-        n = prof.import_cv(Path(args.file).expanduser(), path)
-        print(f"imported {n} characters into {path}")
-        print("review it, add your target role and STAR stories, then restart the app.")
+        from .assistant.practice import import_profile
+
+        print("analysing your CV with the AI (sent to your provider)...", file=sys.stderr)
+        result = import_profile(cfg.assistant, args.file)
+        if result["warning"]:
+            print(result["warning"], file=sys.stderr)
+        print(f"profile written to {path}")
+        if result["to_add"]:
+            print("to complete it, answer:")
+            for q in result["to_add"]:
+                print(f"  - {q}")
+        print("review it (`openinterview profile edit`), then restart the app.")
     elif args.action == "edit":
         prof.ensure_template(path)
         subprocess.run(["open", "-t", str(path)])

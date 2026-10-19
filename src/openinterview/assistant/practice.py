@@ -46,6 +46,38 @@ def make_provider(cfg: AssistantConfig) -> AnswerProvider:
     return OpenCodeProvider(cfg.base_url, cfg.model, timeout=cfg.timeout_s, profile=text)
 
 
+def import_profile(cfg: AssistantConfig, source: str, provider: AnswerProvider | None = None,
+                   provider_factory=None) -> dict:
+    """Import a CV into the profile: extract text, let the AI organise it (facts only, gaps
+    marked [to add]), and fall back to the raw text if the AI is unavailable."""
+    from pathlib import Path
+
+    path = Path(source).expanduser()
+    if not path.is_file():
+        raise ValueError(f"file not found: {source}")
+    dest = profile.resolve(cfg.profile_path)
+    cv_text = profile.extract_text(path)
+    if not cv_text:
+        raise ValueError(f"no text found in {path.name} (is it a scanned image?)")
+    profile.save_cv_text(cv_text, dest.parent)
+    existing = profile.load(dest)
+    temp = None
+    try:
+        if provider is None:
+            provider = temp = (provider_factory or make_provider)(cfg)
+        markdown, to_add = provider.build_profile(cv_text, existing)
+        profile.write_generated(dest, markdown, to_add, path.name)
+        return {"method": "ai", "to_add": to_add, "warning": ""}
+    except Exception as exc:
+        log.warning("AI profile build failed, importing raw text: %s", exc)
+        profile.import_cv(path, dest)
+        return {"method": "raw", "to_add": [],
+                "warning": f"AI analysis unavailable ({exc}); imported the raw CV text instead."}
+    finally:
+        if temp is not None and hasattr(temp, "close"):
+            temp.close()
+
+
 class PracticeAssistant:
     def __init__(self, cfg: AssistantConfig, publish, provider_factory=make_provider) -> None:
         self.cfg = cfg
@@ -103,13 +135,9 @@ class PracticeAssistant:
         return self.profile_info()
 
     def import_cv(self, source: str) -> dict:
-        from pathlib import Path
-
-        path = Path(source).expanduser()
-        if not path.is_file():
-            raise ValueError(f"file not found: {source}")
-        profile.import_cv(path, self.profile_path)
-        return self.reload_profile()
+        result = import_profile(self.cfg, source, self.provider, self.provider_factory)
+        info = self.reload_profile()
+        return {**info, **result}
 
     def set_mode(self, mode: str) -> None:
         if mode not in ("practice", "immediate"):

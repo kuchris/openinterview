@@ -201,9 +201,26 @@ uv run openinterview profile import ~/Documents/cv.pdf   # PDF, Word, RTF, Pages
 uv run openinterview profile edit                        # opens ~/.openinterview/profile.md
 ```
 
-In the app, the same is under ⚙︎ → **Your profile** (Import CV…, Edit…, Reload). The
-template has sections for target role, experience, projects, education, strengths and
-weaknesses, and STAR stories. Fill in what interviewers ask about.
+In the app, the same is under ⚙︎ → **Your profile** (Import CV…, Edit…, Reload).
+
+**Import analyses the CV with the AI.** It doesn't just paste text in:
+
+1. The text is extracted (PDF, Word, RTF, Pages or text). The raw text is kept as
+   `~/.openinterview/cv.txt`.
+2. A separate `profile-builder` agent organises it into the profile sections: about me,
+   target role, experience (keeping the CV's numbers), projects, education, skills,
+   strengths backed by evidence, weaknesses, and 2–3 STAR story drafts built from your
+   achievements.
+3. It uses only facts from the CV and your existing notes, which are kept. Anything the CV
+   doesn't state is written `[to add]` (target role, weaknesses, the *task* in a story…).
+4. You get 3–6 questions to answer to complete the profile. They are stored as a comment
+   in the file and are never sent with questions.
+5. If the AI is unreachable, the raw CV text is imported instead, and you're told why.
+
+Live, on a fictional CV, it took 11 s. Every fact matched the CV, gaps were marked
+`[to add]`, and the questions included "What is a real weakness, and how are you working
+on it?". Check the result with **Edit…** and fill in the gaps: the more real stories you
+add, the better behavioural answers get.
 
 - **Facts only.** Answers state only facts from your profile. When it doesn't cover what's
   asked (say, no weakness written down), the answer keeps a `[placeholder]` and a key point
@@ -212,8 +229,8 @@ weaknesses, and STAR stories. Fill in what interviewers ask about.
   + fix] to profile".
 - **Stored outside the project** (`assistant.profile_path`, default
   `~/.openinterview/profile.md`), so it never ends up in git.
-- **Privacy:** the profile is sent to your AI provider (OpenCode → the model you chose)
-  with each question.
+- **Privacy:** importing sends your CV to your AI provider (OpenCode → the model you chose)
+  to organise it. After that, the profile is sent with each question.
 
 ### Setup
 
