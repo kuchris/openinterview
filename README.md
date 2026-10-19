@@ -191,6 +191,30 @@ turns the interviewer's complete questions into practice cards:
 
 You can also type a question in the panel.
 
+### Your profile (personalised behavioural answers)
+
+Without a profile, behavioural answers ("Tell me about yourself", "Why this major?") are
+templates with `[placeholders]`. Add your background and they are written about you:
+
+```bash
+uv run openinterview profile import ~/Documents/cv.pdf   # PDF, Word, RTF, Pages or text
+uv run openinterview profile edit                        # opens ~/.openinterview/profile.md
+```
+
+In the app, the same is under ⚙︎ → **Your profile** (Import CV…, Edit…, Reload). The
+template has sections for target role, experience, projects, education, strengths and
+weaknesses, and STAR stories. Fill in what interviewers ask about.
+
+- **Facts only.** Answers state only facts from your profile. When it doesn't cover what's
+  asked (say, no weakness written down), the answer keeps a `[placeholder]` and a key point
+  tells you what to add. Nothing is made up. Verified live: without a weakness in the
+  profile, the answer was "My honest weakness is [your weakness]…" with "Add: [your weakness
+  + fix] to profile".
+- **Stored outside the project** (`assistant.profile_path`, default
+  `~/.openinterview/profile.md`), so it never ends up in git.
+- **Privacy:** the profile is sent to your AI provider (OpenCode → the model you chose)
+  with each question.
+
 ### Setup
 
 ```bash
@@ -421,6 +445,9 @@ Covers:
   fallback, an expired-key error); the OpenAI-compatible provider with history; the
   practice flow (context, spoken-answer capture, feedback, disabled = no requests,
   provider failure isolated); and the API endpoints.
+- **Profile:** template detection, comment stripping, truncation, CV import (text,
+  Word via textutil, keeping existing notes), prompt injection with the no-invention rule,
+  a fresh OpenCode session on profile change, and the API.
 - **Sources:** helper crash restart, device-change restart without backoff, hung-helper
   restart, idle-without-frames *not* restarting, idle gap zero-fill, BlackHole fallback
   selection, setup instructions when no backend exists, shared PortAudio reset.

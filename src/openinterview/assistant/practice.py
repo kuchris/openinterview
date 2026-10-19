@@ -25,6 +25,7 @@ import time
 from collections import OrderedDict, deque
 from ..config import AssistantConfig
 from ..queues import DropOldestQueue
+from . import profile
 from .detector import DetectorConfig, QuestionDetector
 from .providers import Answer, AnswerProvider, OpenAICompatibleProvider, OpenCodeProvider
 
@@ -33,14 +34,16 @@ SPEAKER = {"mic": "Me", "system": "Them"}
 
 
 def make_provider(cfg: AssistantConfig) -> AnswerProvider:
+    text = profile.load(profile.resolve(cfg.profile_path))
     if cfg.provider == "openai":
         import os
 
         if not cfg.model:
             raise ValueError("assistant.model is required for the openai provider")
         return OpenAICompatibleProvider(cfg.base_url, cfg.model,
-                                        os.environ.get(cfg.api_key_env, ""), cfg.timeout_s)
-    return OpenCodeProvider(cfg.base_url, cfg.model, timeout=cfg.timeout_s)
+                                        os.environ.get(cfg.api_key_env, ""), cfg.timeout_s,
+                                        profile=text)
+    return OpenCodeProvider(cfg.base_url, cfg.model, timeout=cfg.timeout_s, profile=text)
 
 
 class PracticeAssistant:
@@ -80,6 +83,33 @@ class PracticeAssistant:
                                                     daemon=True)
                     self._worker.start()
         self._publish_state()
+
+    # -- personal profile ------------------------------------------------------------------
+
+    @property
+    def profile_path(self):
+        return profile.resolve(self.cfg.profile_path)
+
+    def profile_info(self) -> dict:
+        return profile.info(self.profile_path)
+
+    def reload_profile(self) -> dict:
+        """Re-read the profile file and hand it to the provider (new context)."""
+        text = profile.load(self.profile_path)
+        with self._lock:
+            if self.provider is not None and hasattr(self.provider, "set_profile"):
+                self.provider.set_profile(text)
+        self._publish_state()
+        return self.profile_info()
+
+    def import_cv(self, source: str) -> dict:
+        from pathlib import Path
+
+        path = Path(source).expanduser()
+        if not path.is_file():
+            raise ValueError(f"file not found: {source}")
+        profile.import_cv(path, self.profile_path)
+        return self.reload_profile()
 
     def set_mode(self, mode: str) -> None:
         if mode not in ("practice", "immediate"):
@@ -209,7 +239,7 @@ class PracticeAssistant:
     def state(self) -> dict:
         return {"enabled": self.enabled, "mode": self.cfg.mode, "provider": self.cfg.provider,
                 "healthy": self.health[0], "health": self.health[1],
-                "listen_to": self.listening_to()}
+                "listen_to": self.listening_to(), "profile": self.profile_info()}
 
     def snapshot(self) -> dict:
         with self._lock:

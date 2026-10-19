@@ -98,31 +98,56 @@ struct SettingsPopover: View {
 
     var body: some View {
         Form {
-            Picker("Listen to", selection: $m.source) {
-                Text("Mic").tag("mic")
-                Text("System").tag("system")
-                Text("Both").tag("both")
+            Section("Audio") {
+                Picker("Listen to", selection: $m.source) {
+                    Text("Mic").tag("mic")
+                    Text("System").tag("system")
+                    Text("Both").tag("both")
+                }
+                .pickerStyle(.segmented)
+                Picker("Model", selection: $m.model) {
+                    ForEach(m.models, id: \.self) { Text($0).tag($0) }
+                }
+                Picker("Microphone", selection: $m.device) {
+                    Text("System default").tag("")
+                    ForEach(m.devices, id: \.self) { Text($0).tag($0) }
+                }
+                .disabled(m.source == "system")
+                if m.running {
+                    Text("Stop recording to change these.").font(.caption).foregroundStyle(.secondary)
+                } else if m.source == "both" {
+                    Text("Use headphones so the mic doesn't pick up the other side.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
-            .pickerStyle(.segmented)
-            Picker("Model", selection: $m.model) {
-                ForEach(m.models, id: \.self) { Text($0).tag($0) }
-            }
-            Picker("Microphone", selection: $m.device) {
-                Text("System default").tag("")
-                ForEach(m.devices, id: \.self) { Text($0).tag($0) }
-            }
-            .disabled(m.source == "system")
-            if m.running {
-                Text("Stop recording to change these.").font(.caption).foregroundStyle(.secondary)
-            }
-            if m.source == "both" {
-                Text("Use headphones so the mic doesn't pick up the other side.")
-                    .font(.caption).foregroundStyle(.secondary)
+            .disabled(m.running)
+
+            Section("Your profile") {
+                HStack {
+                    Image(systemName: m.profileLoaded ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.questionmark")
+                        .foregroundStyle(m.profileLoaded ? Color.green : Color.secondary)
+                        .font(.title3)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(m.profileLoaded ? "Loaded · \(m.profileWords) words" : "No profile yet")
+                        Text(m.profileLoaded ? "Behavioural answers use your background."
+                                             : "Answers use [placeholders] for your details.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                HStack {
+                    Button("Import CV…", action: m.importCV)
+                    Button("Edit…", action: m.editProfile)
+                    Button("Reload", action: m.reloadProfile)
+                }
+                if !m.profileMessage.isEmpty {
+                    Text(m.profileMessage).font(.caption).foregroundStyle(.secondary)
+                }
+                Text("Your profile is sent to your AI provider (OpenCode) with each question.")
+                    .font(.caption2).foregroundStyle(.tertiary)
             }
         }
         .formStyle(.grouped)
-        .disabled(m.running)
-        .frame(width: 360)
+        .frame(width: 380)
         .padding(.vertical, 4)
     }
 }

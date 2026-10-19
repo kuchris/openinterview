@@ -5,6 +5,7 @@
   openinterview run [--source mic|system|both] [--model base.en] [--duration S]
   openinterview transcribe-file FILE [--speed 1.0] [--model base.en]
   openinterview app                            native app window (recommended)
+  openinterview profile [show|edit|import CV|path]   personal profile for answers
   openinterview serve [--port 8765]           local web dashboard
 """
 
@@ -331,6 +332,33 @@ def cmd_transcribe_file(args: argparse.Namespace, cfg: Config) -> int:
 
 # -- entry -----------------------------------------------------------------------------
 
+def cmd_profile(args: argparse.Namespace, cfg: Config) -> int:
+    from .assistant import profile as prof
+
+    path = prof.resolve(cfg.assistant.profile_path)
+    if args.action == "import":
+        if not args.file:
+            print("usage: openinterview profile import CV_FILE", file=sys.stderr)
+            return 2
+        n = prof.import_cv(Path(args.file).expanduser(), path)
+        print(f"imported {n} characters into {path}")
+        print("review it, add your target role and STAR stories, then restart the app.")
+    elif args.action == "edit":
+        prof.ensure_template(path)
+        subprocess.run(["open", "-t", str(path)])
+        print(path)
+    elif args.action == "path":
+        print(path)
+    else:
+        info = prof.info(path)
+        print(json.dumps(info, indent=2))
+        if not info["loaded"]:
+            print("no profile yet: run `openinterview profile edit` or "
+                  "`openinterview profile import cv.pdf`", file=sys.stderr)
+    print("note: the profile is sent to your AI provider with each question.", file=sys.stderr)
+    return 0
+
+
 def cmd_app(args: argparse.Namespace, cfg: Config) -> int:
     from .web.server import run_app
 
@@ -371,6 +399,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("app", help="open the OpenInterview window (native macOS app)") \
         .set_defaults(func=cmd_app)
+
+    pr = sub.add_parser("profile", help="your profile / CV for personalised answers")
+    pr.add_argument("action", nargs="?", default="show", choices=["show", "edit", "import", "path"])
+    pr.add_argument("file", nargs="?", help="CV file for `import` (PDF, Word, RTF, Pages, text)")
+    pr.set_defaults(func=cmd_profile)
 
     w = sub.add_parser("serve", help="local web dashboard (127.0.0.1)")
     w.add_argument("--port", type=int, default=8765)

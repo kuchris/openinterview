@@ -49,11 +49,26 @@ ANSWER_RULES = (
     "words, not full sentences. python_example: only for technical questions where code "
     'genuinely helps (algorithms, data structures, language features), at most 10 runnable '
     'lines; otherwise "". Behavioural questions (about the candidate, their background, '
-    "motivation, teamwork, strengths...): you do not know their history, so give a model "
-    "answer they can adapt, with short [placeholders] for their own details (e.g. [your "
-    "degree]), and key points that outline the structure (e.g. STAR: situation, task, "
-    "action, result); no code."
+    "motivation, teamwork, strengths...): write a first-person model answer. Use facts from "
+    "the candidate profile when one is given; use short [placeholders] (e.g. [your degree]) "
+    "for anything the profile does not cover. Never invent employers, dates, numbers or "
+    "achievements. Key points outline the structure (e.g. STAR: situation, task, action, "
+    "result); no code."
 )
+
+
+def coach_prompt(profile: str = "") -> str:
+    """The coach's system prompt, with the candidate's profile appended if they have one."""
+    if not profile.strip():
+        return COACH_PROMPT
+    return (COACH_PROMPT + "\n\nCandidate profile (facts about the person you are coaching; "
+            "the only source of truth about them):\n<<<\n" + profile.strip() + "\n>>>\n"
+            "Rules for using the profile: state only facts that are written in it, without "
+            "embellishing (no added motives, feelings, anecdotes or numbers). If the profile "
+            "does not contain what the question asks for (e.g. a weakness, a conflict story, "
+            "a reason for a choice), do NOT make it up: answer with short [placeholders] such "
+            "as [your weakness] and make one key point say what to add to the profile. For "
+            "technical questions, mention their experience only when clearly relevant.")
 
 FEEDBACK_RULES = (
     'Format: {"covered": [string], "missed": [string], "tip": string}. Compare the '
@@ -188,21 +203,30 @@ class OpenCodeProvider:
     AGENT = "interview-coach"
 
     def __init__(self, base_url: str = "http://127.0.0.1:4096", model: str | None = None,
-                 timeout: float = 60.0, directory: str | None = None) -> None:
+                 timeout: float = 60.0, directory: str | None = None, profile: str = "") -> None:
         self.http = _HTTP(base_url, timeout)
         self.model = model  # "providerID/modelID"; None = OpenCode's configured default
+        self.profile = profile
         # An empty scratch directory: OpenCode treats it as the project root, and loads the
         # coach agent from its opencode.json.
         self.directory = directory or tempfile.mkdtemp(prefix="openinterview-opencode-")
         self._write_agent_config()
         self.session_id: str | None = None
 
+    def set_profile(self, profile: str) -> None:
+        """Use a new profile. OpenCode caches a directory's config, so start a fresh
+        directory and session (the old session is deleted)."""
+        self.close()
+        self.profile = profile
+        self.directory = tempfile.mkdtemp(prefix="openinterview-opencode-")
+        self._write_agent_config()
+
     def _write_agent_config(self) -> None:
         import os
 
         config = {"$schema": "https://opencode.ai/config.json", "agent": {self.AGENT: {
             "description": "Concise technical interview coach (OpenInterview)",
-            "mode": "primary", "prompt": COACH_PROMPT, "temperature": 0.3,
+            "mode": "primary", "prompt": coach_prompt(self.profile), "temperature": 0.3,
             "tools": {"*": False},
         }}}
         with open(os.path.join(self.directory, "opencode.json"), "w") as f:
@@ -276,11 +300,17 @@ class OpenAICompatibleProvider:
 
     name = "openai"
 
-    def __init__(self, base_url: str, model: str, api_key: str = "", timeout: float = 60.0) -> None:
+    def __init__(self, base_url: str, model: str, api_key: str = "", timeout: float = 60.0,
+                 profile: str = "") -> None:
         self.http = _HTTP(base_url, timeout)
         self.model = model
         self.api_key = api_key
+        self.profile = profile
         self.history: list[dict] = []  # conversation context across questions
+
+    def set_profile(self, profile: str) -> None:
+        self.profile = profile
+        self.history = []
 
     def _headers(self) -> dict:
         return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
@@ -293,7 +323,7 @@ class OpenAICompatibleProvider:
             return False, str(exc)
 
     def _chat(self, text: str, schema: dict) -> dict:
-        messages = [{"role": "system", "content": COACH_PROMPT + " " + _rules(schema)},
+        messages = [{"role": "system", "content": coach_prompt(self.profile) + "\n" + _rules(schema)},
                     *self.history[-8:], {"role": "user", "content": text}]
         r = self.http.request("POST", "/chat/completions", {
             "model": self.model, "messages": messages, "temperature": 0.2,

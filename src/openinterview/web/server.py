@@ -12,6 +12,10 @@ HTTP
   POST /api/assistant      {"enabled"?: bool, "mode"?: "practice"|"immediate"}
   POST /api/assistant/ask  {"question": str}   ask a typed question
   POST /api/assistant/{id}/grade               feedback on your spoken answer
+  GET  /api/profile        personal profile status (path, words)
+  POST /api/profile/import {"path": cv file}    import a CV (PDF, Word, RTF, Pages, text)
+  POST /api/profile/edit   create the template if needed; returns the path to open
+  POST /api/profile/reload re-read the profile after editing
 WebSocket /ws
   server -> client: the Session messages (status, source, transcript, metrics) plus a
   "snapshot" on connect. Partials are coalesced to at most one per source per 100 ms.
@@ -176,6 +180,28 @@ def create_app(cfg: Config, session_factory=None, provider_factory=make_provider
         except KeyError as exc:
             raise HTTPException(404, str(exc)) from exc
         return {"ok": True}
+
+    @app.get("/api/profile")
+    async def profile_get():
+        return assistant.profile_info()
+
+    @app.post("/api/profile/import")
+    async def profile_import(body: dict = Body(default={})):
+        try:
+            return await asyncio.to_thread(assistant.import_cv, str(body.get("path", "")))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/api/profile/edit")
+    async def profile_edit():
+        from ..assistant import profile as prof
+
+        prof.ensure_template(assistant.profile_path)
+        return assistant.profile_info()
+
+    @app.post("/api/profile/reload")
+    async def profile_reload():
+        return await asyncio.to_thread(assistant.reload_profile)
 
     @app.websocket("/ws")
     async def ws(websocket: WebSocket):

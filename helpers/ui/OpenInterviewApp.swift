@@ -97,6 +97,10 @@ final class AppModel: ObservableObject {
     @Published var assistantHealthy = false
     @Published var assistantHealth = ""
     @Published var listenTo: [String] = []
+    @Published var profileLoaded = false
+    @Published var profileWords = 0
+    @Published var profilePath = ""
+    @Published var profileMessage = ""
     @Published var cards: [Card] = []
     @Published var selectedCard: Int?
     private var socket: URLSessionWebSocketTask?
@@ -229,6 +233,53 @@ final class AppModel: ObservableObject {
         assistantHealthy = s["healthy"] as? Bool ?? false
         assistantHealth = s["health"] as? String ?? ""
         listenTo = s["listen_to"] as? [String] ?? []
+        if let p = s["profile"] as? [String: Any] { applyProfile(p) }
+    }
+
+    private func applyProfile(_ p: [String: Any]) {
+        profileLoaded = p["loaded"] as? Bool ?? false
+        profileWords = p["words"] as? Int ?? 0
+        profilePath = p["path"] as? String ?? ""
+    }
+
+    // -- personal profile ------------------------------------------------------------------
+
+    func importCV() {
+        let panel = NSOpenPanel()
+        panel.title = "Import your CV"
+        panel.allowedContentTypes = [.pdf, .rtf, .plainText, .text,
+                                     .init(filenameExtension: "docx")!, .init(filenameExtension: "doc")!,
+                                     .init(filenameExtension: "pages")!, .init(filenameExtension: "md")!]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        profileMessage = "Importing…"
+        Task {
+            if let info = await request("POST", "api/profile/import", ["path": url.path]) {
+                applyProfile(info)
+                profileMessage = "Imported \(url.lastPathComponent). Review it with Edit…"
+            } else {
+                profileMessage = error
+            }
+        }
+    }
+
+    func editProfile() {
+        Task {
+            if let info = await request("POST", "api/profile/edit") {
+                applyProfile(info)
+                NSWorkspace.shared.open(URL(fileURLWithPath: profilePath))
+                profileMessage = "After saving your edits, click Reload."
+            }
+        }
+    }
+
+    func reloadProfile() {
+        Task {
+            if let info = await request("POST", "api/profile/reload") {
+                applyProfile(info)
+                profileMessage = profileLoaded ? "Profile reloaded." : "Profile is still empty."
+            }
+        }
     }
 
     private func handle(_ msg: [String: Any]) {

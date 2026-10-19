@@ -59,6 +59,7 @@ class AssistantConfig:
     mode: str = "immediate"              # immediate | practice (hide until revealed)
     listen_to: list[str] = field(default_factory=lambda: ["auto"])  # auto | [system, mic]
     filter_small_talk: bool = True    # only interview questions (technical/behavioural)
+    profile_path: str | None = None   # personal profile/CV (default ~/.openinterview/profile.md)
     timeout_s: float = 60.0
     max_cards: int = 50
 
